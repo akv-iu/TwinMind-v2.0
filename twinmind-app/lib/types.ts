@@ -1,4 +1,17 @@
-export type CardType = 'QUESTION_TO_ASK' | 'TALKING_POINT' | 'ANSWER' | 'FACT_CHECK'
+export type CardType =
+  | 'QUESTION_TO_ASK'
+  | 'TALKING_POINT'
+  | 'ANSWER'
+  | 'FACT_CHECK'
+  | 'CLARIFYING_INFO'
+
+export interface SuggestIntentPrompts {
+  QUESTION_TO_ASK: string
+  TALKING_POINT: string
+  ANSWER: string
+  FACT_CHECK: string
+  CLARIFYING_INFO: string
+}
 
 export interface TranscriptLine {
   id: string
@@ -25,7 +38,7 @@ export interface ChatMessage {
 
 export interface SettingsState {
   groqApiKey: string
-  suggestPrompt: string
+  suggestIntentPrompts: SuggestIntentPrompts
   chatPrompt: string
   suggestContextChars: number
   chatContextChars: number

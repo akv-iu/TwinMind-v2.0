@@ -12,14 +12,13 @@ const sampleCards: SuggestionCard[] = [
 ]
 
 beforeEach(() => {
-  useStore.setState({ batches: [] })
+  useStore.setState({ batches: [], isRecording: false })
 })
 
 describe('normalizeCards', () => {
-  it('pads two cards out to three with the fallback card', () => {
+  it('pads two cards out to three with fallback cards', () => {
     const result = normalizeCards(sampleCards.slice(0, 2))
     expect(result).toHaveLength(3)
-    expect(result[2].type).toBe('ANSWER')
     expect(result[2].preview.length).toBeGreaterThan(0)
   })
 
@@ -43,10 +42,10 @@ describe('normalizeCards', () => {
     const result = normalizeCards(dirty)
     expect(result).toHaveLength(3)
     expect(result[0]).toEqual(sampleCards[0])
-    expect(result[1].type).toBe('TALKING_POINT')
+    expect(result[1].preview.length).toBeGreaterThan(0)
   })
 
-  it('deduplicates repeated types to preserve type variety', () => {
+  it('preserves repeated types when model returns duplicates', () => {
     const duplicateHeavy = [
       { type: 'QUESTION_TO_ASK', preview: 'q1' },
       { type: 'QUESTION_TO_ASK', preview: 'q2' },
@@ -56,9 +55,19 @@ describe('normalizeCards', () => {
     expect(result).toHaveLength(3)
     expect(result.map((c) => c.type)).toEqual([
       'QUESTION_TO_ASK',
-      'TALKING_POINT',
-      'ANSWER',
+      'QUESTION_TO_ASK',
+      'QUESTION_TO_ASK',
     ])
+  })
+
+  it('accepts CLARIFYING_INFO as a valid card type', () => {
+    const result = normalizeCards([
+      { type: 'CLARIFYING_INFO', preview: 'Define the scope term before deciding.' },
+      sampleCards[0],
+      sampleCards[1],
+    ])
+    expect(result).toHaveLength(3)
+    expect(result[0].type).toBe('CLARIFYING_INFO')
   })
 })
 
@@ -91,6 +100,7 @@ describe('formatCardType', () => {
     expect(formatCardType('QUESTION_TO_ASK')).toBe('QUESTION TO ASK')
     expect(formatCardType('TALKING_POINT')).toBe('TALKING POINT')
     expect(formatCardType('ANSWER')).toBe('ANSWER')
+    expect(formatCardType('CLARIFYING_INFO')).toBe('CLARIFYING INFO')
   })
   it('renders FACT_CHECK with a hyphen', () => {
     expect(formatCardType('FACT_CHECK')).toBe('FACT-CHECK')

@@ -3,7 +3,7 @@ import { deduplicateTail, lastWords } from '@/lib/dedup'
 import { useStore } from '@/store'
 
 beforeEach(() => {
-  useStore.setState({ transcriptLines: [], isTranscribing: false })
+  useStore.setState({ transcriptLines: [], isTranscribing: false, isRecording: false })
 })
 
 describe('deduplicateTail', () => {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { useStore } from '@/store'
 
 beforeEach(() => {
-  useStore.setState({ chatMessages: [] })
+  useStore.setState({ chatMessages: [], isRecording: false })
 })
 
 describe('chat slice', () => {

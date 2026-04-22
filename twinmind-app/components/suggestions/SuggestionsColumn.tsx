@@ -6,6 +6,7 @@ import { ColumnHeader } from '@/components/layout/ColumnHeader'
 import { SuggestionBatch } from './SuggestionBatch'
 import { useStore } from '@/store'
 import type { SuggestionCard } from '@/lib/types'
+import { buildSuggestPrompt } from '@/store/settingsSlice'
 
 const COUNTDOWN_SECONDS = 30
 
@@ -25,8 +26,9 @@ export interface SuggestionsColumnProps {
 export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsColumnProps) {
   const batches = useStore((s) => s.batches)
   const transcriptLines = useStore((s) => s.transcriptLines)
+  const isRecording = useStore((s) => s.isRecording)
   const apiKey = useStore((s) => s.groqApiKey)
-  const suggestPrompt = useStore((s) => s.suggestPrompt)
+  const suggestIntentPrompts = useStore((s) => s.suggestIntentPrompts)
   const suggestContextChars = useStore((s) => s.suggestContextChars)
   const addBatch = useStore((s) => s.addBatch)
 
@@ -52,7 +54,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcript: context,
-          prompt: suggestPrompt,
+          prompt: buildSuggestPrompt(suggestIntentPrompts),
           apiKey,
         }),
       })
@@ -68,9 +70,10 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       isLoadingRef.current = false
       setIsLoading(false)
     }
-  }, [apiKey, suggestPrompt, suggestContextChars, transcriptLines, addBatch])
+  }, [apiKey, suggestIntentPrompts, suggestContextChars, transcriptLines, addBatch])
 
   useEffect(() => {
+    if (!isRecording) return
     const id = setInterval(() => {
       if (isLoadingRef.current) return
       setCountdown((prev) => {
@@ -82,7 +85,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       })
     }, 1000)
     return () => clearInterval(id)
-  }, [fireSuggestions])
+  }, [fireSuggestions, isRecording])
 
   function handleReload() {
     if (isLoading || !apiKey.trim()) return
@@ -116,7 +119,9 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
           <RefreshCw size={12} className={isLoading ? 'animate-spin' : undefined} />
           Reload suggestions
         </button>
-        <span className="text-xs text-zinc-500">auto-refresh in {countdown}s</span>
+        <span className="text-xs text-zinc-500">
+          {isRecording ? `auto-refresh in ${countdown}s` : 'auto-refresh paused (mic off)'}
+        </span>
       </div>
 
       <div className="relative flex-1 overflow-y-auto">

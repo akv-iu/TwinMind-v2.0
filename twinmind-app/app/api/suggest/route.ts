@@ -9,20 +9,23 @@ const VALID_TYPES: ReadonlySet<CardType> = new Set([
   'TALKING_POINT',
   'ANSWER',
   'FACT_CHECK',
+  'CLARIFYING_INFO',
 ])
 
-const CARD_TYPE_ORDER: CardType[] = [
-  'QUESTION_TO_ASK',
+const FALLBACK_TYPE_ORDER: CardType[] = [
+  'CLARIFYING_INFO',
   'TALKING_POINT',
+  'QUESTION_TO_ASK',
   'ANSWER',
   'FACT_CHECK',
 ]
 
 const FALLBACK_PREVIEWS: Record<CardType, string> = {
-  QUESTION_TO_ASK: 'What should we clarify before making a decision?',
-  TALKING_POINT: 'Highlight the key risk and owner from the latest update.',
-  ANSWER: 'Based on the latest context, alignment appears incomplete.',
-  FACT_CHECK: 'Verify the latest metric and source before committing.',
+  QUESTION_TO_ASK: 'What single question would unblock the next decision?',
+  TALKING_POINT: 'Summarize the highest-impact takeaway from the latest update.',
+  ANSWER: 'Offer a direct response based on the most recent transcript evidence.',
+  FACT_CHECK: 'Verify the latest claim with a source or concrete metric.',
+  CLARIFYING_INFO: 'Add one clarifying detail to remove ambiguity before proceeding.',
 }
 
 export function normalizeCards(input: unknown): SuggestionCard[] {
@@ -36,7 +39,6 @@ export function normalizeCards(input: unknown): SuggestionCard[] {
   }
 
   const normalized: SuggestionCard[] = []
-  const seenTypes = new Set<CardType>()
   for (const item of arr) {
     if (normalized.length >= 3) break
     if (!item || typeof item !== 'object') continue
@@ -46,23 +48,14 @@ export function normalizeCards(input: unknown): SuggestionCard[] {
     if (typeof type !== 'string' || typeof preview !== 'string') continue
     const typed = type as CardType
     if (!VALID_TYPES.has(typed)) continue
-    if (seenTypes.has(typed)) continue
-    normalized.push({ type: typed, preview: preview.trim() })
-    seenTypes.add(typed)
-  }
-
-  for (const type of CARD_TYPE_ORDER) {
-    if (normalized.length >= 3) break
-    if (seenTypes.has(type)) continue
-    normalized.push({ type, preview: FALLBACK_PREVIEWS[type] })
-    seenTypes.add(type)
+    const trimmedPreview = preview.trim()
+    if (!trimmedPreview) continue
+    normalized.push({ type: typed, preview: trimmedPreview })
   }
 
   while (normalized.length < 3) {
-    normalized.push({
-      type: 'QUESTION_TO_ASK',
-      preview: FALLBACK_PREVIEWS.QUESTION_TO_ASK,
-    })
+    const type = FALLBACK_TYPE_ORDER[normalized.length % FALLBACK_TYPE_ORDER.length]
+    normalized.push({ type, preview: FALLBACK_PREVIEWS[type] })
   }
 
   return normalized

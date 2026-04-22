@@ -7,6 +7,7 @@ const BADGE_STYLES: Record<CardType, string> = {
   TALKING_POINT: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
   ANSWER: 'bg-green-500/20 text-green-300 border-green-500/30',
   FACT_CHECK: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+  CLARIFYING_INFO: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
 }
 
 export function formatCardType(type: CardType): string {

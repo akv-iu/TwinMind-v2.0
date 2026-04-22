@@ -51,6 +51,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   const apiKey = useStore((s) => s.groqApiKey)
   const addTranscriptLine = useStore((s) => s.addTranscriptLine)
   const setTranscribing = useStore((s) => s.setTranscribing)
+  const setRecording = useStore((s) => s.setRecording)
 
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -69,6 +70,10 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   useEffect(() => {
     apiKeyRef.current = apiKey
   }, [apiKey])
+
+  useEffect(() => {
+    setRecording(isRecording)
+  }, [isRecording, setRecording])
 
   useEffect(() => {
     if (
@@ -282,8 +287,9 @@ export function useAudioRecorder(): UseAudioRecorderResult {
         }
       }
       stopStreamTracks()
+      setRecording(false)
     }
-  }, [clearChunkTimer, stopStreamTracks])
+  }, [clearChunkTimer, setRecording, stopStreamTracks])
 
   return {
     isRecording,

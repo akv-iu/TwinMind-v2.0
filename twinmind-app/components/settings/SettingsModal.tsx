@@ -3,7 +3,11 @@
 import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { useStore } from '@/store'
-import { CHAT_PROMPT_DEFAULT, SUGGEST_PROMPT_DEFAULT } from '@/store/settingsSlice'
+import type { SuggestIntentPrompts } from '@/lib/types'
+import {
+  CHAT_PROMPT_DEFAULT,
+  SUGGEST_INTENT_PROMPTS_DEFAULT,
+} from '@/store/settingsSlice'
 
 export interface SettingsModalProps {
   open: boolean
@@ -15,14 +19,31 @@ const MAX_SUGGEST_CONTEXT = 20000
 const MIN_CHAT_CONTEXT = 500
 const MAX_CHAT_CONTEXT = 50000
 
+const SUGGEST_INTENT_FIELDS: Array<{
+  key: keyof SuggestIntentPrompts
+  label: string
+}> = [
+  { key: 'QUESTION_TO_ASK', label: 'Question To Ask' },
+  { key: 'TALKING_POINT', label: 'Talking Point' },
+  { key: 'ANSWER', label: 'Answer' },
+  { key: 'FACT_CHECK', label: 'Fact Check' },
+  { key: 'CLARIFYING_INFO', label: 'Clarifying Info' },
+]
+
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.min(max, Math.max(min, Math.trunc(value)))
 }
 
+function cloneSuggestIntentPrompts(
+  prompts: SuggestIntentPrompts,
+): SuggestIntentPrompts {
+  return { ...prompts }
+}
+
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const groqApiKey = useStore((s) => s.groqApiKey)
-  const suggestPrompt = useStore((s) => s.suggestPrompt)
+  const suggestIntentPrompts = useStore((s) => s.suggestIntentPrompts)
   const chatPrompt = useStore((s) => s.chatPrompt)
   const suggestContextChars = useStore((s) => s.suggestContextChars)
   const chatContextChars = useStore((s) => s.chatContextChars)
@@ -30,7 +51,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const [draft, setDraft] = useState({
     groqApiKey,
-    suggestPrompt,
+    suggestIntentPrompts: cloneSuggestIntentPrompts(suggestIntentPrompts),
     chatPrompt,
     suggestContextChars,
     chatContextChars,
@@ -40,7 +61,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     if (!open) return
     setDraft({
       groqApiKey,
-      suggestPrompt,
+      suggestIntentPrompts: cloneSuggestIntentPrompts(suggestIntentPrompts),
       chatPrompt,
       suggestContextChars,
       chatContextChars,
@@ -48,7 +69,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   }, [
     open,
     groqApiKey,
-    suggestPrompt,
+    suggestIntentPrompts,
     chatPrompt,
     suggestContextChars,
     chatContextChars,
@@ -57,9 +78,38 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   if (!open) return null
 
   function normalizeDraft() {
+    const normalizePrompt = (
+      value: string,
+      fallback: string,
+    ): string => {
+      const trimmed = value.trim()
+      return trimmed || fallback
+    }
+
     return {
       groqApiKey: draft.groqApiKey.trim(),
-      suggestPrompt: draft.suggestPrompt.trim(),
+      suggestIntentPrompts: {
+        QUESTION_TO_ASK: normalizePrompt(
+          draft.suggestIntentPrompts.QUESTION_TO_ASK,
+          SUGGEST_INTENT_PROMPTS_DEFAULT.QUESTION_TO_ASK,
+        ),
+        TALKING_POINT: normalizePrompt(
+          draft.suggestIntentPrompts.TALKING_POINT,
+          SUGGEST_INTENT_PROMPTS_DEFAULT.TALKING_POINT,
+        ),
+        ANSWER: normalizePrompt(
+          draft.suggestIntentPrompts.ANSWER,
+          SUGGEST_INTENT_PROMPTS_DEFAULT.ANSWER,
+        ),
+        FACT_CHECK: normalizePrompt(
+          draft.suggestIntentPrompts.FACT_CHECK,
+          SUGGEST_INTENT_PROMPTS_DEFAULT.FACT_CHECK,
+        ),
+        CLARIFYING_INFO: normalizePrompt(
+          draft.suggestIntentPrompts.CLARIFYING_INFO,
+          SUGGEST_INTENT_PROMPTS_DEFAULT.CLARIFYING_INFO,
+        ),
+      },
       chatPrompt: draft.chatPrompt.trim(),
       suggestContextChars: clamp(
         draft.suggestContextChars,
@@ -84,7 +134,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   function handleResetPrompts() {
     setDraft((d) => ({
       ...d,
-      suggestPrompt: SUGGEST_PROMPT_DEFAULT,
+      suggestIntentPrompts: cloneSuggestIntentPrompts(
+        SUGGEST_INTENT_PROMPTS_DEFAULT,
+      ),
       chatPrompt: CHAT_PROMPT_DEFAULT,
     }))
   }
@@ -124,14 +176,33 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </p>
           </Field>
 
-          <Field label="Suggest prompt">
-            <textarea
-              rows={6}
-              value={draft.suggestPrompt}
-              onChange={(e) => setDraft({ ...draft, suggestPrompt: e.target.value })}
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
-            />
-          </Field>
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
+              Suggestion Intent Prompts (5 Sections)
+            </p>
+            <div className="overflow-x-auto pb-1">
+              <div className="grid grid-flow-col auto-cols-[17rem] gap-3">
+                {SUGGEST_INTENT_FIELDS.map((field) => (
+                  <Field key={field.key} label={field.label}>
+                    <textarea
+                      rows={7}
+                      value={draft.suggestIntentPrompts[field.key]}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          suggestIntentPrompts: {
+                            ...draft.suggestIntentPrompts,
+                            [field.key]: e.target.value,
+                          },
+                        })
+                      }
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                    />
+                  </Field>
+                ))}
+              </div>
+            </div>
+          </div>
 
           <Field label="Chat prompt">
             <textarea
