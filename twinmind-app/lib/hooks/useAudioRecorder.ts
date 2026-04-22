@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '@/store'
 import { deduplicateTail, lastWords } from '@/lib/dedup'
 
-const CHUNK_MS = 25_000
-const TAIL_WORD_COUNT = 20
+const CHUNK_MS = 6_000
+const TAIL_WORD_COUNT = 10
 
 function timestampNow(): string {
   return new Date().toLocaleTimeString('en-US', {
@@ -59,9 +59,12 @@ export function useAudioRecorder(): UseAudioRecorderResult {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastTranscriptTailRef = useRef<string>('')
   const inFlightCountRef = useRef<number>(0)
   const apiKeyRef = useRef<string>(apiKey)
+  const shouldRecordRef = useRef<boolean>(false)
+  const uploadQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   useEffect(() => {
     apiKeyRef.current = apiKey
@@ -120,6 +123,27 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     [addTranscriptLine, setTranscribing],
   )
 
+  const clearChunkTimer = useCallback(() => {
+    if (chunkTimerRef.current) {
+      clearTimeout(chunkTimerRef.current)
+      chunkTimerRef.current = null
+    }
+  }, [])
+
+  const stopStreamTracks = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+  }, [])
+
+  const enqueueChunkUpload = useCallback(
+    (blob: Blob) => {
+      uploadQueueRef.current = uploadQueueRef.current.finally(async () => {
+        await sendChunk(blob)
+      })
+    },
+    [sendChunk],
+  )
+
   const requestMicrophoneAccess = useCallback(async (): Promise<boolean> => {
     const unavailableReason = getMicUnavailableReason()
     if (unavailableReason) {
@@ -141,14 +165,61 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     }
   }, [error])
 
-  const handleData = useCallback(
-    (event: BlobEvent) => {
-      if (!event.data || event.data.size === 0) return
-      // Send each recorder chunk directly. Stitching partial binary tails can create
-      // invalid WebM blobs, which causes "first chunk works, next chunk fails" behavior.
-      void sendChunk(event.data)
+  const startRecorderCycle = useCallback(
+    (stream: MediaStream) => {
+      if (!shouldRecordRef.current) return
+      if (!stream.active) {
+        setError('Microphone stream ended. Please start recording again.')
+        setIsRecording(false)
+        shouldRecordRef.current = false
+        stopStreamTracks()
+        return
+      }
+
+      const mimeType = pickMimeType()
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      let cycleBlob: Blob | null = null
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (!event.data || event.data.size === 0) return
+        cycleBlob = cycleBlob
+          ? new Blob([cycleBlob, event.data], {
+              type: event.data.type || mimeType || 'audio/webm',
+            })
+          : event.data
+      }
+
+      recorder.onerror = () => setError('Recording error. Try restarting the mic.')
+
+      recorder.onstop = () => {
+        mediaRecorderRef.current = null
+        clearChunkTimer()
+
+        if (cycleBlob && cycleBlob.size > 0) {
+          enqueueChunkUpload(cycleBlob)
+        }
+
+        if (!shouldRecordRef.current) {
+          stopStreamTracks()
+          return
+        }
+        if (streamRef.current !== stream) return
+        startRecorderCycle(stream)
+      }
+
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      chunkTimerRef.current = setTimeout(() => {
+        if (recorder.state !== 'inactive') {
+          try {
+            recorder.stop()
+          } catch {
+            // ignore
+          }
+        }
+      }, CHUNK_MS)
     },
-    [sendChunk],
+    [clearChunkTimer, enqueueChunkUpload, stopStreamTracks],
   )
 
   const startRecording = useCallback(async () => {
@@ -166,25 +237,24 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
+      shouldRecordRef.current = true
       setHasMicPermission(true)
-      const mimeType = pickMimeType()
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-      recorder.ondataavailable = handleData
-      recorder.onerror = () => setError('Recording error. Try restarting the mic.')
-      mediaRecorderRef.current = recorder
       lastTranscriptTailRef.current = ''
-      recorder.start(CHUNK_MS)
       setIsRecording(true)
+      startRecorderCycle(stream)
     } catch (err) {
       setHasMicPermission(false)
       const message = err instanceof Error ? err.message : 'Could not access microphone.'
       setError(message)
-      streamRef.current?.getTracks().forEach((t) => t.stop())
-      streamRef.current = null
+      shouldRecordRef.current = false
+      clearChunkTimer()
+      stopStreamTracks()
     }
-  }, [handleData, isRecording])
+  }, [clearChunkTimer, isRecording, startRecorderCycle, stopStreamTracks])
 
   const stopRecording = useCallback(() => {
+    shouldRecordRef.current = false
+    clearChunkTimer()
     const recorder = mediaRecorderRef.current
     if (recorder && recorder.state !== 'inactive') {
       try {
@@ -192,15 +262,17 @@ export function useAudioRecorder(): UseAudioRecorderResult {
       } catch {
         // ignore
       }
+    } else {
+      stopStreamTracks()
     }
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    streamRef.current = null
     mediaRecorderRef.current = null
     setIsRecording(false)
-  }, [])
+  }, [clearChunkTimer, stopStreamTracks])
 
   useEffect(() => {
     return () => {
+      shouldRecordRef.current = false
+      clearChunkTimer()
       const recorder = mediaRecorderRef.current
       if (recorder && recorder.state !== 'inactive') {
         try {
@@ -209,9 +281,9 @@ export function useAudioRecorder(): UseAudioRecorderResult {
           // ignore
         }
       }
-      streamRef.current?.getTracks().forEach((t) => t.stop())
+      stopStreamTracks()
     }
-  }, [])
+  }, [clearChunkTimer, stopStreamTracks])
 
   return {
     isRecording,

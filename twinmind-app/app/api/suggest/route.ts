@@ -95,7 +95,7 @@ export async function POST(request: Request) {
   try {
     const groq = new Groq({ apiKey: apiKey.trim() })
     const completion = await groq.chat.completions.create({
-      model: 'gpt-OSS-120B',
+      model: 'openai/gpt-oss-120b',
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: prompt ?? '' },

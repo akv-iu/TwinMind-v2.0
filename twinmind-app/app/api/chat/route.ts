@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   let stream: AsyncIterable<{ choices: Array<{ delta?: { content?: string } }> }>
   try {
     stream = (await groq.chat.completions.create({
-      model: 'gpt-OSS-120B',
+      model: 'openai/gpt-oss-120b',
       stream: true,
       messages: [
         { role: 'system', content: systemContent },
