@@ -21,18 +21,23 @@ export const createChatSlice: StateCreator<AllSlices, [], [], ChatSlice> = (set)
   },
   beginAssistantMessage: () =>
     set((s) => ({
-      chatMessages: [...s.chatMessages, { role: 'assistant', text: '' }],
+      chatMessages: [...s.chatMessages, { role: 'assistant', text: '', isFinalized: false }],
     })),
   appendToLastMessage: (delta) =>
     set((s) => {
       if (s.chatMessages.length === 0) return s
       const next = s.chatMessages.slice()
       const last = next[next.length - 1]
-      next[next.length - 1] = { ...last, text: last.text + delta }
+      next[next.length - 1] = { ...last, text: last.text + delta, isFinalized: false }
       return { chatMessages: next }
     }),
-  finaliseLastMessage: () => {
-    // No-op marker; signals streaming has completed.
-  },
+  finaliseLastMessage: () =>
+    set((s) => {
+      if (s.chatMessages.length === 0) return s
+      const next = s.chatMessages.slice()
+      const last = next[next.length - 1]
+      next[next.length - 1] = { ...last, isFinalized: true }
+      return { chatMessages: next }
+    }),
   clearChat: () => set({ chatMessages: [] }),
 })

@@ -12,16 +12,28 @@ import { ColumnHeader } from '@/components/layout/ColumnHeader'
 import { ChatBubble } from './ChatBubble'
 import { ChatInput } from './ChatInput'
 import { useAutoScroll } from '@/lib/hooks/useAutoScroll'
+import { takeTailByChars } from '@/lib/context'
 import { useStore } from '@/store'
 import type { CardType, ChatMessage, SuggestionCard } from '@/lib/types'
+
+const RESPONSE_INTERRUPTED_MARKER = '\n\n\u26A0 Response interrupted.'
 
 export interface ChatColumnHandle {
   sendCardAsMessage: (card: SuggestionCard) => void
 }
 
+function trimPendingAssistantMessage(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length === 0) return messages
+  const last = messages[messages.length - 1]
+  if (last.role !== 'assistant') return messages
+  if (last.isFinalized) return messages
+  return messages.slice(0, -1)
+}
+
 export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_props, ref) {
   const chatMessages = useStore((s) => s.chatMessages)
   const transcriptLines = useStore((s) => s.transcriptLines)
+  const rollingSummary = useStore((s) => s.summary)
   const apiKey = useStore((s) => s.groqApiKey)
   const chatPrompt = useStore((s) => s.chatPrompt)
   const chatContextChars = useStore((s) => s.chatContextChars)
@@ -34,12 +46,28 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
   const [error, setError] = useState<string | null>(null)
   const isStreamingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
+  const currentRequestIdRef = useRef<string | null>(null)
+  const lastScrollRef = useRef(0)
 
   const { containerRef, onScroll, scrollToBottom } = useAutoScroll()
 
   useEffect(() => {
+    const now = Date.now()
+    if (now - lastScrollRef.current < 100) return
+    lastScrollRef.current = now
     scrollToBottom()
-  }, [chatMessages, isStreaming, scrollToBottom])
+  }, [chatMessages.length, isStreaming, scrollToBottom])
+
+  useEffect(() => {
+    if (!isStreaming) return
+    let raf = 0
+    const tick = () => {
+      scrollToBottom()
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [isStreaming, scrollToBottom])
 
   useEffect(() => {
     return () => {
@@ -49,18 +77,27 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
 
   const fireChat = useCallback(
     async (messagesForRequest: ChatMessage[]) => {
-      if (isStreamingRef.current) return
-      if (!apiKey.trim()) return
+      const key = apiKey.trim()
+      if (!key) return
+
+      abortRef.current?.abort()
+      const requestId = crypto.randomUUID()
+      currentRequestIdRef.current = requestId
+
+      const controller = new AbortController()
+      abortRef.current = controller
+
       isStreamingRef.current = true
       setIsStreaming(true)
       setError(null)
 
-      const allText = transcriptLines.map((l) => l.text).join(' ')
-      const transcript = allText.slice(-chatContextChars)
-      const controller = new AbortController()
-      abortRef.current = controller
+      const transcript = takeTailByChars(transcriptLines, chatContextChars)
+      const summaryText = rollingSummary.trim() || 'not available yet'
 
       beginAssistantMessage()
+      let didStreamAnyDelta = false
+
+      const isCurrentRequest = () => currentRequestIdRef.current === requestId
 
       try {
         const res = await fetch('/api/chat', {
@@ -68,18 +105,23 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             transcript,
+            rollingSummary: summaryText,
             messages: messagesForRequest,
             prompt: chatPrompt,
-            apiKey,
+            apiKey: key,
           }),
           signal: controller.signal,
         })
 
         if (!res.ok || !res.body) {
-          const data = await res
-            .json()
-            .catch(() => ({ error: 'Chat request failed' }))
-          throw new Error(data.error ?? 'Chat request failed')
+          let msg = 'Chat request failed'
+          try {
+            const data = (await res.json()) as { error?: string }
+            msg = data?.error ?? msg
+          } catch {
+            // keep fallback message
+          }
+          throw new Error(msg)
         }
 
         const reader = res.body.getReader()
@@ -100,25 +142,48 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
             for (const line of event.split('\n')) {
               if (!line.startsWith('data:')) continue
               const payload = line.slice(5).trim()
+              if (!isCurrentRequest()) return
+
               if (payload === '[DONE]') {
                 finaliseLastMessage()
                 continue
               }
+
               try {
                 const parsed = JSON.parse(payload) as { delta?: string }
-                if (parsed.delta) appendToLastMessage(parsed.delta)
+                if (parsed.delta) {
+                  didStreamAnyDelta = true
+                  appendToLastMessage(parsed.delta)
+                }
               } catch {
                 // ignore malformed event lines
               }
             }
           }
         }
-        finaliseLastMessage()
+
+        if (isCurrentRequest()) {
+          finaliseLastMessage()
+        }
       } catch (e) {
+        if (!isCurrentRequest()) return
         if ((e as { name?: string }).name === 'AbortError') return
-        appendToLastMessage(' [Response interrupted]')
-        setError('Chat request failed.')
+
+        if (didStreamAnyDelta) {
+          appendToLastMessage(RESPONSE_INTERRUPTED_MARKER)
+          finaliseLastMessage()
+          return
+        }
+
+        setError(e instanceof Error ? e.message : 'Chat request failed')
+
+        const state = useStore.getState()
+        useStore.setState({
+          chatMessages: trimPendingAssistantMessage(state.chatMessages),
+        })
       } finally {
+        if (!isCurrentRequest()) return
+        currentRequestIdRef.current = null
         isStreamingRef.current = false
         setIsStreaming(false)
         abortRef.current = null
@@ -126,12 +191,13 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
     },
     [
       apiKey,
-      chatPrompt,
-      chatContextChars,
-      transcriptLines,
       beginAssistantMessage,
       appendToLastMessage,
+      chatContextChars,
+      chatPrompt,
       finaliseLastMessage,
+      rollingSummary,
+      transcriptLines,
     ],
   )
 
@@ -139,8 +205,21 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
     (text: string, suggestionType: CardType | null) => {
       const trimmed = text.trim()
       if (!trimmed) return
-      if (isStreamingRef.current) return
       if (!apiKey.trim()) return
+
+      if (isStreamingRef.current) {
+        abortRef.current?.abort()
+        currentRequestIdRef.current = null
+        isStreamingRef.current = false
+        setIsStreaming(false)
+        abortRef.current = null
+
+        const state = useStore.getState()
+        useStore.setState({
+          chatMessages: trimPendingAssistantMessage(state.chatMessages),
+        })
+      }
+
       addUserMessage({ suggestionType, text: trimmed })
       const snapshot = useStore.getState().chatMessages
       void fireChat(snapshot)
@@ -158,11 +237,31 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
     [sendUserText],
   )
 
+  const handleRetryLast = useCallback(() => {
+    const messages = useStore.getState().chatMessages
+    let lastUserIndex = -1
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === 'user') {
+        lastUserIndex = i
+        break
+      }
+    }
+    if (lastUserIndex === -1) return
+
+    const retryMessages = messages.slice(0, lastUserIndex + 1)
+    useStore.setState({ chatMessages: retryMessages })
+    setError(null)
+    void fireChat(retryMessages)
+  }, [fireChat])
+
   function handleManualSend(text: string) {
     sendUserText(text, null)
   }
 
   const noKey = !apiKey.trim()
+  const lastMessage = chatMessages[chatMessages.length - 1]
+  const showStreamingIndicator =
+    isStreaming && lastMessage?.role === 'assistant' && !lastMessage?.isFinalized
 
   return (
     <div className="flex h-full flex-col bg-zinc-950">
@@ -192,7 +291,8 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
               <ChatBubble
                 key={index}
                 message={message}
-                isStreaming={isStreaming && isLast && message.role === 'assistant'}
+                isStreaming={isStreaming && isLast && message.role === 'assistant' && !message.isFinalized}
+                onRetryLast={isLast ? handleRetryLast : undefined}
               />
             )
           })
@@ -200,7 +300,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
         {error && (
           <p className="text-center text-xs text-red-400">{error}</p>
         )}
-        {isStreaming && (
+        {showStreamingIndicator && (
           <span
             aria-hidden
             className="pointer-events-none absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-amber-400"
@@ -210,7 +310,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
 
       <ChatInput
         onSend={handleManualSend}
-        disabled={noKey || isStreaming}
+        disabled={noKey}
         placeholder={
           noKey
             ? 'Add your Groq API key in Settings to start.'

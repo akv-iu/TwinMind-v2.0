@@ -4,17 +4,23 @@ import type { SuggestionBatch, SuggestionCard } from '@/lib/types'
 
 export interface SuggestionsSlice {
   batches: SuggestionBatch[]
+  summary: string
   addBatch: (payload: { timestamp: string; cards: SuggestionCard[] }) => void
+  getRecentBatches: (count: number) => SuggestionBatch[]
+  setSummary: (summary: string) => void
   clearBatches: () => void
 }
 
-export const createSuggestionsSlice: StateCreator<AllSlices, [], [], SuggestionsSlice> = (set) => ({
+export const createSuggestionsSlice: StateCreator<AllSlices, [], [], SuggestionsSlice> = (set, get) => ({
   batches: [],
+  summary: '',
   addBatch: ({ timestamp, cards }) =>
     set((s) => {
       const batchNumber = s.batches.length + 1
       const newBatch: SuggestionBatch = { batchNumber, timestamp, cards }
       return { batches: [newBatch, ...s.batches] }
     }),
-  clearBatches: () => set({ batches: [] }),
+  getRecentBatches: (count) => get().batches.slice(0, Math.max(0, count)),
+  setSummary: (summary) => set({ summary }),
+  clearBatches: () => set({ batches: [], summary: '' }),
 })

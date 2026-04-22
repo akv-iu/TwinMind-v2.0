@@ -16,10 +16,9 @@ beforeEach(() => {
 })
 
 describe('normalizeCards', () => {
-  it('pads two cards out to three with fallback cards', () => {
+  it('keeps only model-provided cards without padding', () => {
     const result = normalizeCards(sampleCards.slice(0, 2))
-    expect(result).toHaveLength(3)
-    expect(result[2].preview.length).toBeGreaterThan(0)
+    expect(result).toHaveLength(2)
   })
 
   it('trims five cards down to three', () => {
@@ -40,16 +39,24 @@ describe('normalizeCards', () => {
       sampleCards[0],
     ]
     const result = normalizeCards(dirty)
-    expect(result).toHaveLength(3)
+    expect(result).toHaveLength(1)
     expect(result[0]).toEqual(sampleCards[0])
-    expect(result[1].preview.length).toBeGreaterThan(0)
+  })
+
+  it('drops cards with too-short preview text', () => {
+    const result = normalizeCards([
+      { type: 'ANSWER', preview: 'too short' },
+      sampleCards[0],
+    ])
+    expect(result).toHaveLength(1)
+    expect(result[0].type).toBe('QUESTION_TO_ASK')
   })
 
   it('preserves repeated types when model returns duplicates', () => {
     const duplicateHeavy = [
-      { type: 'QUESTION_TO_ASK', preview: 'q1' },
-      { type: 'QUESTION_TO_ASK', preview: 'q2' },
-      { type: 'QUESTION_TO_ASK', preview: 'q3' },
+      { type: 'QUESTION_TO_ASK', preview: 'What is the release date for launch?' },
+      { type: 'QUESTION_TO_ASK', preview: 'Who owns the migration sign-off now?' },
+      { type: 'QUESTION_TO_ASK', preview: 'Which blocker is highest risk today?' },
     ]
     const result = normalizeCards(duplicateHeavy)
     expect(result).toHaveLength(3)
@@ -60,15 +67,6 @@ describe('normalizeCards', () => {
     ])
   })
 
-  it('accepts CLARIFYING_INFO as a valid card type', () => {
-    const result = normalizeCards([
-      { type: 'CLARIFYING_INFO', preview: 'Define the scope term before deciding.' },
-      sampleCards[0],
-      sampleCards[1],
-    ])
-    expect(result).toHaveLength(3)
-    expect(result[0].type).toBe('CLARIFYING_INFO')
-  })
 })
 
 describe('addBatch', () => {
@@ -100,7 +98,6 @@ describe('formatCardType', () => {
     expect(formatCardType('QUESTION_TO_ASK')).toBe('QUESTION TO ASK')
     expect(formatCardType('TALKING_POINT')).toBe('TALKING POINT')
     expect(formatCardType('ANSWER')).toBe('ANSWER')
-    expect(formatCardType('CLARIFYING_INFO')).toBe('CLARIFYING INFO')
   })
   it('renders FACT_CHECK with a hyphen', () => {
     expect(formatCardType('FACT_CHECK')).toBe('FACT-CHECK')

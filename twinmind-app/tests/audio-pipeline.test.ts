@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { deduplicateTail, lastWords } from '@/lib/dedup'
+import { transcribeWithRetry } from '@/lib/hooks/useAudioRecorder'
 import { useStore } from '@/store'
 
 beforeEach(() => {
@@ -63,5 +64,72 @@ describe('transcript slice', () => {
     useStore.getState().addTranscriptLine({ timestamp: '10:00:01', text: 'hi' })
     useStore.getState().clearTranscript()
     expect(useStore.getState().transcriptLines).toHaveLength(0)
+  })
+})
+
+describe('transcribeWithRetry', () => {
+  it('retries 503 responses and eventually succeeds', async () => {
+    const responses = [
+      new Response(JSON.stringify({ error: 'upstream down' }), { status: 503 }),
+      new Response(JSON.stringify({ error: 'upstream down' }), { status: 503 }),
+      new Response(JSON.stringify({ error: 'upstream down' }), { status: 503 }),
+      new Response(JSON.stringify({ text: 'final transcript' }), { status: 200 }),
+    ]
+    const fetchImpl = vi.fn(async () => responses.shift()!)
+    const wait = vi.fn(async (_ms: number) => {})
+    const form = new FormData()
+
+    const text = await transcribeWithRetry(form, { fetchImpl, wait })
+
+    expect(text).toBe('final transcript')
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    expect(wait).toHaveBeenCalledTimes(3)
+    expect(wait.mock.calls.map((args) => args[0])).toEqual([250, 1000, 3000])
+  })
+
+  it('fails fast on 401 without retry', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'Invalid API key' }), { status: 401 }),
+    )
+    const wait = vi.fn(async (_ms: number) => {})
+    const form = new FormData()
+
+    await expect(transcribeWithRetry(form, { fetchImpl, wait })).rejects.toThrow(
+      'Invalid API key',
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(wait).not.toHaveBeenCalled()
+  })
+
+  it('retries network errors for 4 total attempts then fails', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('network down')
+    })
+    const wait = vi.fn(async (_ms: number) => {})
+    const form = new FormData()
+
+    await expect(transcribeWithRetry(form, { fetchImpl, wait })).rejects.toThrow(
+      'network down',
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    expect(wait).toHaveBeenCalledTimes(3)
+    expect(wait.mock.calls.map((args) => args[0])).toEqual([250, 1000, 3000])
+  })
+
+  it('retries 429 and succeeds on the next attempt', async () => {
+    const responses = [
+      new Response(JSON.stringify({ error: 'Rate limited' }), { status: 429 }),
+      new Response(JSON.stringify({ text: 'retried transcript' }), { status: 200 }),
+    ]
+    const fetchImpl = vi.fn(async () => responses.shift()!)
+    const wait = vi.fn(async (_ms: number) => {})
+    const form = new FormData()
+
+    const text = await transcribeWithRetry(form, { fetchImpl, wait })
+
+    expect(text).toBe('retried transcript')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(wait).toHaveBeenCalledTimes(1)
+    expect(wait).toHaveBeenCalledWith(250)
   })
 })

@@ -5,6 +5,9 @@ import { isUpstreamTimeoutError, withTimeout } from '@/lib/server/withTimeout'
 
 export const runtime = 'nodejs'
 
+const SUMMARY_SYSTEM_PROMPT =
+  'Summarize this meeting transcript in 3-5 short bullet points covering: who is involved, the main topics discussed, the decisions or open questions. Max 120 words total. Output plain text, no markdown headers.'
+
 function extractClientIp(request: Request): string {
   return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
 }
@@ -15,36 +18,35 @@ function isValidApiKeyFormat(value: string): boolean {
 
 export async function POST(request: Request) {
   const startedAt = Date.now()
-  let form: FormData
+  let body: { transcript?: string; apiKey?: string }
   try {
-    form = await request.formData()
+    body = await request.json()
   } catch {
-    return NextResponse.json({ error: 'Invalid form data' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const apiKey = form.get('apiKey') as string | null
-  const audio = form.get('audio') as File | null
+  const transcript = body.transcript?.trim() ?? ''
+  const apiKey = body.apiKey?.trim() ?? ''
   const ip = extractClientIp(request)
 
-  if (!apiKey || !apiKey.trim()) {
+  if (!apiKey) {
     return NextResponse.json({ error: 'No API key provided' }, { status: 400 })
   }
-  const apiKeyTrimmed = apiKey.trim()
-  if (!isValidApiKeyFormat(apiKeyTrimmed)) {
+  if (!isValidApiKeyFormat(apiKey)) {
     return NextResponse.json({ error: 'invalid api key format' }, { status: 400 })
   }
-  if (!audio) {
-    return NextResponse.json({ error: 'No audio provided' }, { status: 400 })
+  if (!transcript) {
+    return NextResponse.json({ error: 'No transcript provided' }, { status: 400 })
   }
 
-  const rate = checkRateLimit(ip, 'transcribe', LIMITS.transcribe)
+  const rate = checkRateLimit(ip, 'summarize', LIMITS.summarize)
   if (!rate.allowed) {
     console.log(
       JSON.stringify({
-        route: 'transcribe',
+        route: 'summarize',
         status: 'rate_limited',
         latencyMs: Date.now() - startedAt,
-        bytesIn: audio.size,
+        charsIn: transcript.length,
       }),
     )
     return NextResponse.json(
@@ -54,48 +56,53 @@ export async function POST(request: Request) {
   }
 
   try {
-    const groq = new Groq({ apiKey: apiKeyTrimmed })
-    const result = await withTimeout(
-      groq.audio.transcriptions.create({
-        file: audio,
-        model: 'whisper-large-v3',
-        response_format: 'json',
+    const groq = new Groq({ apiKey })
+    const completion = await withTimeout(
+      groq.chat.completions.create({
+        model: 'openai/gpt-oss-120b',
+        temperature: 0.3,
+        max_tokens: 300,
+        messages: [
+          { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
+          { role: 'user', content: `Transcript:\n${transcript}` },
+        ],
       }),
-      25_000,
-      'transcribe',
+      15_000,
+      'summarize',
     )
-    const text = result.text ?? ''
+
+    const summary = completion.choices[0]?.message?.content?.trim() ?? ''
     console.log(
       JSON.stringify({
-        route: 'transcribe',
+        route: 'summarize',
         status: 'ok',
         latencyMs: Date.now() - startedAt,
-        bytesIn: audio.size,
-        charsOut: text.length,
+        charsIn: transcript.length,
+        summaryChars: summary.length,
       }),
     )
-    return NextResponse.json({ text })
+    return NextResponse.json({ summary })
   } catch (err) {
     if (isUpstreamTimeoutError(err)) {
       console.log(
         JSON.stringify({
-          route: 'transcribe',
+          route: 'summarize',
           status: 'timeout',
           latencyMs: Date.now() - startedAt,
-          bytesIn: audio.size,
+          charsIn: transcript.length,
         }),
       )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
     }
     console.log(
       JSON.stringify({
-        route: 'transcribe',
+        route: 'summarize',
         status: 'error',
         latencyMs: Date.now() - startedAt,
-        bytesIn: audio.size,
+        charsIn: transcript.length,
       }),
     )
-    const message = err instanceof Error ? err.message : 'Transcription failed'
+    const message = err instanceof Error ? err.message : 'Summary failed'
     return NextResponse.json({ error: message }, { status: 502 })
   }
 }

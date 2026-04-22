@@ -33,6 +33,7 @@ describe('chat slice', () => {
     const last = useStore.getState().chatMessages.at(-1)!
     expect(last.role).toBe('assistant')
     expect(last.text).toBe('')
+    expect(last.isFinalized).toBe(false)
   })
 
   it('appendToLastMessage concatenates streamed deltas', () => {
@@ -41,6 +42,14 @@ describe('chat slice', () => {
     useStore.getState().appendToLastMessage('lo, ')
     useStore.getState().appendToLastMessage('world!')
     expect(useStore.getState().chatMessages.at(-1)!.text).toBe('Hello, world!')
+    expect(useStore.getState().chatMessages.at(-1)!.isFinalized).toBe(false)
+  })
+
+  it('finaliseLastMessage marks the last message as finalized', () => {
+    useStore.getState().beginAssistantMessage()
+    useStore.getState().appendToLastMessage('partial')
+    useStore.getState().finaliseLastMessage()
+    expect(useStore.getState().chatMessages.at(-1)!.isFinalized).toBe(true)
   })
 
   it('appendToLastMessage is a no-op when no messages exist', () => {

@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { ColumnHeader } from '@/components/layout/ColumnHeader'
 import { SuggestionBatch } from './SuggestionBatch'
+import { formatCardType } from './SuggestionCard'
 import { useStore } from '@/store'
-import type { SuggestionCard } from '@/lib/types'
+import type { SuggestionCard, TranscriptLine } from '@/lib/types'
+import { takeTailByChars } from '@/lib/context'
+import { refreshSummary, shouldRefreshSummary } from '@/lib/summary'
 import { buildSuggestPrompt } from '@/store/settingsSlice'
 
 const COUNTDOWN_SECONDS = 30
@@ -18,6 +21,15 @@ function timestampNow(): string {
   })
 }
 
+function countTranscriptChars(lines: TranscriptLine[]): number {
+  return lines.reduce((total, line) => total + line.timestamp.length + 2 + line.text.length + 1, 0)
+}
+
+interface SuggestResponse {
+  cards: SuggestionCard[]
+  degraded?: boolean
+}
+
 export interface SuggestionsColumnProps {
   onCardClick?: (card: SuggestionCard) => void
   cardsDisabled?: boolean
@@ -25,6 +37,9 @@ export interface SuggestionsColumnProps {
 
 export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsColumnProps) {
   const batches = useStore((s) => s.batches)
+  const getRecentBatches = useStore((s) => s.getRecentBatches)
+  const summary = useStore((s) => s.summary)
+  const setSummary = useStore((s) => s.setSummary)
   const transcriptLines = useStore((s) => s.transcriptLines)
   const isRecording = useStore((s) => s.isRecording)
   const apiKey = useStore((s) => s.groqApiKey)
@@ -35,42 +50,114 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [waitingForSubstance, setWaitingForSubstance] = useState(false)
 
   const isLoadingRef = useRef(false)
+  const isSummaryRefreshingRef = useRef(false)
+  const lastSummaryTranscriptCharsRef = useRef(0)
+  const lastSummaryBatchCountRef = useRef(0)
+
+  useEffect(() => {
+    if (batches.length !== 0 || summary.trim()) return
+    lastSummaryTranscriptCharsRef.current = 0
+    lastSummaryBatchCountRef.current = 0
+  }, [batches.length, summary])
 
   const fireSuggestions = useCallback(async () => {
     if (isLoadingRef.current) return
-    if (!apiKey.trim()) return
-    const allText = transcriptLines.map((l) => l.text).join(' ')
-    const context = allText.slice(-suggestContextChars)
-    if (!context.trim()) return
+    const key = apiKey.trim()
+    if (!key) return
+
+    const recentTranscript = takeTailByChars(transcriptLines, suggestContextChars)
+    if (!recentTranscript.trim()) return
+
+    const priorBatches = getRecentBatches(2)
+      .flatMap((batch) => batch.cards.map((card) => `${formatCardType(card.type)}: ${card.preview}`))
+      .join('\n')
+
+    const mergedPrompt = buildSuggestPrompt(suggestIntentPrompts, {
+      recentTranscript,
+      rollingSummary: summary,
+      priorBatches,
+    })
+
+    const payload = {
+      transcript: recentTranscript,
+      prompt: mergedPrompt,
+      apiKey: key,
+    }
 
     isLoadingRef.current = true
     setIsLoading(true)
     setError(null)
+
     try {
       const res = await fetch('/api/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript: context,
-          prompt: buildSuggestPrompt(suggestIntentPrompts),
-          apiKey,
-        }),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Unknown error' }))
         throw new Error(data.error ?? 'Unknown error')
       }
-      const { cards } = (await res.json()) as { cards: SuggestionCard[] }
+
+      const data = (await res.json()) as SuggestResponse
+      const cards = Array.isArray(data.cards) ? data.cards : []
+
+      if (cards.length === 0) {
+        setWaitingForSubstance(true)
+        return
+      }
+
       addBatch({ timestamp: timestampNow(), cards })
+      setWaitingForSubstance(false)
+
+      const nextBatchCount = useStore.getState().batches.length
+      const transcriptChars = countTranscriptChars(transcriptLines)
+      const refreshNeeded = shouldRefreshSummary({
+        transcriptChars,
+        batchCount: nextBatchCount,
+        lastSummaryTranscriptChars: lastSummaryTranscriptCharsRef.current,
+        lastSummaryBatchCount: lastSummaryBatchCountRef.current,
+      })
+
+      if (!refreshNeeded || isSummaryRefreshingRef.current) return
+
+      lastSummaryTranscriptCharsRef.current = transcriptChars
+      lastSummaryBatchCountRef.current = nextBatchCount
+      isSummaryRefreshingRef.current = true
+
+      const summaryInput = takeTailByChars(
+        transcriptLines,
+        Math.max(suggestContextChars * 6, 24_000),
+      )
+      void refreshSummary(summaryInput, key)
+        .then((nextSummary) => {
+          if (nextSummary) setSummary(nextSummary)
+        })
+        .catch(() => {
+          // summary failures are non-fatal for live suggestions
+        })
+        .finally(() => {
+          isSummaryRefreshingRef.current = false
+        })
     } catch {
       setError('Failed to load suggestions. Retrying in 30s.')
     } finally {
       isLoadingRef.current = false
       setIsLoading(false)
     }
-  }, [apiKey, suggestIntentPrompts, suggestContextChars, transcriptLines, addBatch])
+  }, [
+    addBatch,
+    apiKey,
+    getRecentBatches,
+    setSummary,
+    suggestContextChars,
+    suggestIntentPrompts,
+    summary,
+    transcriptLines,
+  ])
 
   useEffect(() => {
     if (!isRecording) return
@@ -123,6 +210,12 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
           {isRecording ? `auto-refresh in ${countdown}s` : 'auto-refresh paused (mic off)'}
         </span>
       </div>
+
+      {waitingForSubstance && !noKey && (
+        <div className="border-b border-zinc-900 px-4 py-2 text-xs text-zinc-500">
+          waiting for substance...
+        </div>
+      )}
 
       <div className="relative flex-1 overflow-y-auto">
         {noKey ? (

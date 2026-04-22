@@ -27,7 +27,6 @@ const SUGGEST_INTENT_FIELDS: Array<{
   { key: 'TALKING_POINT', label: 'Talking Point' },
   { key: 'ANSWER', label: 'Answer' },
   { key: 'FACT_CHECK', label: 'Fact Check' },
-  { key: 'CLARIFYING_INFO', label: 'Clarifying Info' },
 ]
 
 function clamp(value: number, min: number, max: number): number {
@@ -105,10 +104,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           draft.suggestIntentPrompts.FACT_CHECK,
           SUGGEST_INTENT_PROMPTS_DEFAULT.FACT_CHECK,
         ),
-        CLARIFYING_INFO: normalizePrompt(
-          draft.suggestIntentPrompts.CLARIFYING_INFO,
-          SUGGEST_INTENT_PROMPTS_DEFAULT.CLARIFYING_INFO,
-        ),
       },
       chatPrompt: draft.chatPrompt.trim(),
       suggestContextChars: clamp(
@@ -178,7 +173,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
-              Suggestion Intent Prompts (5 Sections)
+              Suggestion Intent Prompts (4 Sections)
             </p>
             <div className="overflow-x-auto pb-1">
               <div className="grid grid-flow-col auto-cols-[17rem] gap-3">

@@ -3,14 +3,12 @@ export type CardType =
   | 'TALKING_POINT'
   | 'ANSWER'
   | 'FACT_CHECK'
-  | 'CLARIFYING_INFO'
 
 export interface SuggestIntentPrompts {
   QUESTION_TO_ASK: string
   TALKING_POINT: string
   ANSWER: string
   FACT_CHECK: string
-  CLARIFYING_INFO: string
 }
 
 export interface TranscriptLine {
@@ -34,6 +32,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   suggestionType?: CardType | null
   text: string
+  isFinalized?: boolean
 }
 
 export interface SettingsState {

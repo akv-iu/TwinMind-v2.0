@@ -6,6 +6,64 @@ import { deduplicateTail, lastWords } from '@/lib/dedup'
 
 const CHUNK_MS = 6_000
 const TAIL_WORD_COUNT = 10
+const RETRY_DELAYS_MS = [250, 1000, 3000] as const
+
+class NonRetryableTranscriptionError extends Error {}
+class RetryExhaustedTranscriptionError extends Error {}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+interface TranscribeWithRetryOptions {
+  fetchImpl?: typeof fetch
+  wait?: (ms: number) => Promise<void>
+}
+
+export async function transcribeWithRetry(
+  form: FormData,
+  options?: TranscribeWithRetryOptions,
+): Promise<string> {
+  const fetchImpl = options?.fetchImpl ?? fetch
+  const wait = options?.wait ?? delay
+  let lastErr: Error = new Error('Transcription failed')
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const res = await fetchImpl('/api/transcribe', { method: 'POST', body: form })
+      if (res.ok) {
+        const data = (await res.json().catch(() => ({ text: '' }))) as {
+          text?: unknown
+        }
+        return typeof data.text === 'string' ? data.text : ''
+      }
+
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+        const data = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+          error?: unknown
+        }
+        const message =
+          typeof data.error === 'string' && data.error.trim()
+            ? data.error
+            : `HTTP ${res.status}`
+        throw new NonRetryableTranscriptionError(message)
+      }
+
+      lastErr = new Error(`HTTP ${res.status}`)
+    } catch (err) {
+      if (err instanceof NonRetryableTranscriptionError) {
+        throw err
+      }
+      lastErr = err instanceof Error ? err : new Error('Transcription failed')
+    }
+
+    if (attempt < RETRY_DELAYS_MS.length) {
+      await wait(RETRY_DELAYS_MS[attempt])
+    }
+  }
+
+  throw new RetryExhaustedTranscriptionError(lastErr.message)
+}
 
 function timestampNow(): string {
   return new Date().toLocaleTimeString('en-US', {
@@ -102,19 +160,19 @@ export function useAudioRecorder(): UseAudioRecorderResult {
       setIsProcessing(true)
       setTranscribing(true)
       try {
-        const res = await fetch('/api/transcribe', { method: 'POST', body: form })
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({ error: 'Transcription failed' }))
-          throw new Error(data.error ?? 'Transcription failed')
-        }
-        const { text } = (await res.json()) as { text: string }
+        const text = await transcribeWithRetry(form)
         const cleaned = deduplicateTail(lastTranscriptTailRef.current, text ?? '')
         if (cleaned.trim()) {
           addTranscriptLine({ timestamp: timestampNow(), text: cleaned })
           lastTranscriptTailRef.current = lastWords(cleaned, TAIL_WORD_COUNT)
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Transcription failed'
+        const message =
+          err instanceof RetryExhaustedTranscriptionError
+            ? 'Transcription failed after retries'
+            : err instanceof Error
+              ? err.message
+              : 'Transcription failed'
         setError(message)
       } finally {
         inFlightCountRef.current -= 1
