@@ -4,7 +4,7 @@ branch: claude/feature/app-foundation
 
 ## Summary
 
-Bootstraps the Next.js 14 + React + TypeScript project and establishes the two foundational systems that all subsequent specs depend on: a Zustand store with isolated column slices (so a transcript update never re-renders the suggestions or chat columns), and Next.js serverless API route stubs that proxy all Groq SDK calls (the browser never imports the Groq SDK or holds the API key). Also delivers the Settings screen and the static 3-column dark-mode layout shell. No AI calls are made in this spec.
+Bootstraps the Next.js 14 + React + TypeScript project and establishes the two foundational systems that all subsequent specs depend on: a Zustand store with isolated column slices (so a transcript update never re-renders the suggestions or chat columns), and Next.js serverless API route stubs with request-shape validation (the browser never imports the Groq SDK or holds the API key). Also delivers the Settings screen and the static 3-column dark-mode layout shell. No AI calls are made in this spec.
 
 ## Functional Requirements
 
@@ -20,10 +20,10 @@ Bootstraps the Next.js 14 + React + TypeScript project and establishes the two f
   - `chatSlice` — array of `{ role, suggestionType?, text }` messages
   - `settingsSlice` — `{ groqApiKey, suggestPrompt, chatPrompt, suggestContextChars, chatContextChars }`
   - Each slice exposes only its own state and actions; no cross-slice imports in components
-- Create three Next.js API route stubs (return `{ ok: true }` placeholder responses):
-  - `POST /api/transcribe` — will accept `multipart/form-data` with an audio blob
-  - `POST /api/suggest` — will accept `{ transcript, prompt, contextChars, apiKey }`
-  - `POST /api/chat` — will accept `{ transcript, messages, prompt, contextChars, apiKey }` and stream
+- Create three Next.js API route stubs (validation-only; no Groq calls yet):
+  - `POST /api/transcribe` accepts `multipart/form-data` with `audio` and `apiKey`; returns `400` when either is missing, otherwise `200 { ok: true }`
+  - `POST /api/suggest` accepts `{ transcript, prompt, contextChars, apiKey }`; returns `400` when `transcript` or `apiKey` is missing, otherwise `200 { ok: true }`
+  - `POST /api/chat` accepts `{ transcript, messages, prompt, contextChars, apiKey }`; returns `400` when `messages` or `apiKey` is missing, otherwise `200 { ok: true }`
 - Install `groq-sdk`; import it only inside the `/api/*` route files, never in any `app/` or `components/` file
 - Build the Settings screen (modal or slide-over panel):
   - Groq API key input (password field, stored in `settingsSlice` only — never sent to the server except per-request)
@@ -36,6 +36,9 @@ Bootstraps the Next.js 14 + React + TypeScript project and establishes the two f
   > "You are a real-time meeting assistant. Based on the transcript below, generate exactly 3 suggestions. Return a JSON array where each item has: type (one of: QUESTION_TO_ASK, TALKING_POINT, ANSWER, FACT_CHECK) and preview (one punchy sentence, self-contained and useful without clicking). Vary the types — do not repeat the same type twice. Ground every suggestion in the most recent content."
 - Hardcoded default for chat prompt:
   > "You are a meeting assistant with access to a full conversation transcript. The user has selected a suggestion or asked a question. Provide a detailed, specific, and helpful response using the transcript as primary context. Be direct and concise."
+- App must remain non-functional until an API key is pasted:
+  - Disable mic start, suggestion reload, and chat send when `groqApiKey` is empty
+  - Show a clear inline hint: `Add your Groq API key in Settings to start.`
 
 ## Possible Edge Cases
 
@@ -48,9 +51,11 @@ Bootstraps the Next.js 14 + React + TypeScript project and establishes the two f
 - [ ] `npm run dev` starts without errors
 - [ ] 3-column layout renders full-viewport in a browser with the correct headers and status badges
 - [ ] Zustand store is importable; each slice's state and actions are accessible independently
-- [ ] All three `/api/*` routes respond with `200 { ok: true }` to a manual POST
+- [ ] All three `/api/*` routes return `400` with clear errors when required fields are missing
+- [ ] All three `/api/*` routes return `200 { ok: true }` for minimal valid payloads
 - [ ] `groq-sdk` appears in `package.json` but is imported only in `/api/*` files (grep confirms zero client-side imports)
 - [ ] Settings modal opens, all fields are pre-filled with defaults, Save updates `settingsSlice`
+- [ ] Without an API key, mic/reload/send controls are disabled and an inline key-required hint is visible
 - [ ] No TypeScript errors (`tsc --noEmit` passes)
 
 ## Open Questions
@@ -62,4 +67,5 @@ Bootstraps the Next.js 14 + React + TypeScript project and establishes the two f
 Create `tests/app-foundation.test.ts`. Cover:
 - Zustand store: adding a transcript line to `transcriptSlice` does not cause `suggestionsSlice` or `chatSlice` state references to change (referential stability check)
 - Settings defaults: fresh store initialisation contains the correct default prompt strings and context window values
-- API routes: `POST /api/transcribe` without a body returns `400`; `POST /api/suggest` without `apiKey` returns `400`
+- API routes: `POST /api/transcribe` without a body returns `400`; `POST /api/suggest` without `apiKey` returns `400`; minimal valid payload returns `200`
+- UI gating: when `groqApiKey` is empty, mic/reload/send are disabled
