@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TwinMind v2 - Live Suggestions Assignment
 
-## Getting Started
+Single-page meeting copilot built with Next.js + TypeScript.
 
-First, run the development server:
+## Status
+
+- Step 1 to Step 5 implemented and verified
+- Tests passing, TypeScript clean, production build passing
+- Deployment URL: TODO
+
+## Core Features
+
+- 3-column layout:
+  - `1. MIC & TRANSCRIPT`
+  - `2. LIVE SUGGESTIONS`
+  - `3. CHAT (DETAILED ANSWERS)`
+- Microphone recording with chunked transcription via Groq Whisper
+- Live suggestion batches every 30 seconds (manual reload supported)
+- Click-through chat with streamed assistant responses via SSE
+- Session export as JSON
+- In-memory session only (no persistence)
+
+## Tech Stack
+
+- Frontend: Next.js App Router, React 19, TypeScript
+- State: Zustand (slice-based)
+- Styling: Tailwind CSS v4 (dark-mode class variant)
+- AI provider: Groq only
+  - Transcription: `whisper-large-v3`
+  - Suggestions: `gpt-OSS-120B`
+  - Chat: `gpt-OSS-120B`
+- Tests: Vitest + jsdom
+
+## Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Start dev server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3. Open `http://localhost:3000`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+4. Open Settings and paste your Groq API key.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Note: the app intentionally stays non-functional until a key is provided.
 
-## Learn More
+## Commands
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run test
+npx tsc --noEmit
+npm run build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `app/api/transcribe/route.ts`: multipart transcription proxy
+- `app/api/suggest/route.ts`: live suggestion generation + normalization to 3 cards
+- `app/api/chat/route.ts`: streamed SSE responses for chat
+- `store/*Slice.ts`: isolated state slices for transcript, suggestions, chat, settings
+- `components/*`: per-column UI and shared layout primitives
+- `lib/export.ts`: session export shaping and download
+- `lib/hooks/useAudioRecorder.ts`: audio capture and overlap strategy
 
-## Deploy on Vercel
+## Prompt Strategy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Suggest prompt is constrained to typed, actionable outputs and JSON formatting.
+- Suggestion context uses a sliding character window (`suggestContextChars`) from recent transcript text.
+- Chat prompt is separate and uses a larger transcript window (`chatContextChars`) plus conversation history.
+- Both prompt strings and context windows are editable from Settings with tuned defaults.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Tradeoffs
+
+- Character-based context windows are simple and fast but less token-precise.
+- In-memory state avoids persistence complexity and matches assignment constraints.
+- Suggestion normalization pads/trims to guarantee exactly 3 cards, trading strictness for resilience.
+- API key is stored in client state for this session only; no backend key storage.
+
+## Reference App Notes
+
+Capture your own notes after using the real TwinMind app:
+- Timing feel compared to this build
+- Suggestion quality and type balance
+- Chat response style and latency expectations
+
+## Deployment Checklist
+
+- Deploy to Vercel or Netlify
+- Confirm public URL works
+- Confirm only Groq key paste is required
+- Add deployed URL in this README
+
+## Safety / Constraints
+
+- No OpenAI SDK usage
+- No hardcoded API keys
+- Groq imports are limited to `app/api/*` routes
