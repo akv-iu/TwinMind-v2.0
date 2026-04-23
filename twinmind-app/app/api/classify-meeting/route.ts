@@ -50,6 +50,10 @@ function extractFirstJsonObject(raw: string): string {
   return raw.slice(start, end + 1)
 }
 
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
 export async function POST(request: Request) {
   const started = Date.now()
   let body: { transcript?: string; apiKey?: string }
@@ -72,9 +76,22 @@ export async function POST(request: Request) {
   if (!transcript) {
     return NextResponse.json({ error: 'No transcript provided' }, { status: 400 })
   }
+  const userPrompt = `Transcript:\n${transcript}`
+  const baseMetrics = {
+    transcriptChars: transcript.length,
+    promptBytes: utf8Bytes(SYSTEM_PROMPT) + utf8Bytes(userPrompt),
+  }
 
   const rate = checkRateLimit(ip, 'classify', LIMITS.classify)
   if (!rate.allowed) {
+    console.log(
+      JSON.stringify({
+        route: 'classify',
+        status: 'rate_limited',
+        latencyMs: Date.now() - started,
+        ...baseMetrics,
+      }),
+    )
     return NextResponse.json(
       { error: 'Too many requests - wait a minute.' },
       { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
@@ -90,7 +107,7 @@ export async function POST(request: Request) {
         max_tokens: 40,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `Transcript:\n${transcript}` },
+          { role: 'user', content: userPrompt },
         ],
       }),
       10_000,
@@ -127,15 +144,31 @@ export async function POST(request: Request) {
         route: 'classify',
         status: 'ok',
         latencyMs: Date.now() - started,
-        charsIn: transcript.length,
         kind,
+        ...baseMetrics,
       }),
     )
     return NextResponse.json({ kind })
   } catch (err) {
     if (isUpstreamTimeoutError(err)) {
+      console.log(
+        JSON.stringify({
+          route: 'classify',
+          status: 'timeout',
+          latencyMs: Date.now() - started,
+          ...baseMetrics,
+        }),
+      )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
     }
+    console.log(
+      JSON.stringify({
+        route: 'classify',
+        status: 'error',
+        latencyMs: Date.now() - started,
+        ...baseMetrics,
+      }),
+    )
     const message = err instanceof Error ? err.message : 'Classification failed'
     return NextResponse.json({ error: message }, { status: 502 })
   }

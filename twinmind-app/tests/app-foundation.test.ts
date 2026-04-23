@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useStore } from '@/store'
 import {
-  buildChatPrompt,
   CHAT_PROMPT_DEFAULT,
   SUGGEST_INTENT_PROMPTS_DEFAULT,
 } from '@/store/settingsSlice'
+import { buildChatPrompt } from '@/lib/promptBuilders'
 
 beforeEach(() => {
   useStore.setState({

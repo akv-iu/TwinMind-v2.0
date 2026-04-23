@@ -3,9 +3,8 @@ import { shouldClassify } from '@/lib/meetingKind'
 import {
   CHAT_PROMPT_DEFAULT,
   SUGGEST_INTENT_PROMPTS_DEFAULT,
-  buildChatPrompt,
-  buildSuggestPrompt,
 } from '@/store/settingsSlice'
+import { buildChatPrompt, buildSuggestPrompt } from '@/lib/promptBuilders'
 
 describe('meeting-kind classification trigger', () => {
   it('returns true only when enough signal is available and no kind is set', () => {

@@ -28,7 +28,7 @@ export interface SummaryInputPayload {
   tailBudget: number
 }
 
-const MIN_TRANSCRIPT_CHAR_GROWTH = 1500
+const MIN_TRANSCRIPT_CHAR_GROWTH = 4000
 const MIN_BATCH_GROWTH = 5
 
 export function shouldRefreshSummary(state: SummaryRefreshState): boolean {

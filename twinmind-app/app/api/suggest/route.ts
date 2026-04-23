@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server'
 import Groq from 'groq-sdk'
-import type { CardType, SuggestionCard } from '@/lib/types'
+import type { CardType, MeetingKind, SuggestIntentPrompts, SuggestionCard } from '@/lib/types'
 import { checkRateLimit, LIMITS } from '@/lib/server/rateLimit'
 import { extractClientIp } from '@/lib/server/extractClientIp'
 import { isUpstreamTimeoutError, withTimeout } from '@/lib/server/withTimeout'
+import { buildSuggestPrompt } from '@/lib/promptBuilders'
+import { KIND_EXAMPLES, KIND_ROLE_HINTS } from '@/lib/meetingKind'
+import { SUGGEST_INTENT_PROMPTS_DEFAULT } from '@/store/settingsSlice'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +15,17 @@ const VALID_TYPES: ReadonlySet<CardType> = new Set([
   'TALKING_POINT',
   'ANSWER',
   'FACT_CHECK',
+])
+
+const VALID_MEETING_KINDS: ReadonlySet<MeetingKind> = new Set([
+  'standup',
+  'sales',
+  'one_on_one',
+  'design_review',
+  'interview',
+  'brainstorm',
+  'presentation',
+  'other',
 ])
 
 const DEFAULT_SUGGEST_MAX_TOKENS = 560
@@ -25,6 +39,11 @@ const REPAIR_MAX_TOKENS = 220
 const REPAIR_TRANSCRIPT_CHARS = 1200
 const REPAIR_MODEL_OUTPUT_CHARS = 2200
 const FORCE_NONEMPTY_MAX_TOKENS = 240
+
+const MAX_TRANSCRIPT_CHARS = 8000
+const MAX_ROLLING_SUMMARY_CHARS = 1200
+const MAX_PRIOR_BATCHES_CHARS = 1000
+const MAX_INTENT_PROMPT_CHARS = 500
 
 const RETRY_NUDGE_PROMPT =
   'Your previous response was not valid enough. Return ONLY a JSON object with key "cards". Each card must have: type (QUESTION_TO_ASK|TALKING_POINT|ANSWER|FACT_CHECK) and preview (10-180 chars). Produce exactly 3 cards unless there is no substance, then return {"cards":[]}.'
@@ -40,6 +59,38 @@ const REPAIR_SYSTEM_PROMPT = [
   'Prefer exactly 3 cards. Use at least 2 distinct types if possible.',
   'If content is empty/off-topic, return {"cards":[]}.',
 ].join('\n')
+
+interface ParseSuccess {
+  ok: true
+  body: {
+    transcriptTail: string
+    rollingSummary: string
+    priorBatchesText: string
+    meetingKind?: MeetingKind
+    intentPrompts: SuggestIntentPrompts
+    apiKey: string
+    truncationEvents: Record<string, number | boolean>
+  }
+}
+
+interface ParseFailure {
+  ok: false
+  error: 'invalid request shape' | 'invalid field type'
+}
+
+const INTENT_PROMPT_KEYS: Array<keyof SuggestIntentPrompts> = [
+  'QUESTION_TO_ASK',
+  'TALKING_POINT',
+  'ANSWER',
+  'FACT_CHECK',
+]
+
+const INTENT_PROMPT_METRIC_PREFIX: Record<keyof SuggestIntentPrompts, string> = {
+  QUESTION_TO_ASK: 'intentQuestionToAsk',
+  TALKING_POINT: 'intentTalkingPoint',
+  ANSWER: 'intentAnswer',
+  FACT_CHECK: 'intentFactCheck',
+}
 
 function stripJsonFences(raw: string): string {
   const trimmed = raw.trim()
@@ -191,7 +242,6 @@ function shouldFallbackToJsonObject(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const rec = error as GroqErrorLike
 
-  // Primary: structured fields from SDK error payload.
   const code = (
     rec.error?.code ??
     rec.code ??
@@ -211,7 +261,6 @@ function shouldFallbackToJsonObject(error: unknown): boolean {
   if (code.includes('failed_generation')) return true
   if (type.includes('invalid_request_error') && status === 400) return true
 
-  // Secondary: message matching fallback for shape variance.
   const message = [
     rec.error?.message ?? '',
     rec.response?.error?.message ?? '',
@@ -238,6 +287,153 @@ function shouldFallbackToJsonObject(error: unknown): boolean {
 
 function isValidApiKeyFormat(value: string): boolean {
   return value.startsWith('gsk_') && value.length >= 20
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return Boolean(input) && typeof input === 'object' && !Array.isArray(input)
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+function capField(
+  value: string,
+  maxChars: number,
+  metricPrefix: string,
+): { value: string; events: Record<string, number | boolean> } {
+  if (value.length <= maxChars) {
+    return { value, events: {} }
+  }
+  return {
+    value: value.slice(0, maxChars),
+    events: {
+      [`${metricPrefix}Truncated`]: true,
+      [`${metricPrefix}TruncatedFrom`]: value.length,
+      [`${metricPrefix}TruncatedTo`]: maxChars,
+    },
+  }
+}
+
+function normalizeIntentPrompts(input: unknown):
+  | {
+      ok: true
+      intentPrompts: SuggestIntentPrompts
+      truncationEvents: Record<string, number | boolean>
+    }
+  | { ok: false } {
+  if (typeof input === 'undefined') {
+    return {
+      ok: true,
+      intentPrompts: { ...SUGGEST_INTENT_PROMPTS_DEFAULT },
+      truncationEvents: {},
+    }
+  }
+  if (!isRecord(input)) return { ok: false }
+
+  const intentPrompts: SuggestIntentPrompts = {
+    QUESTION_TO_ASK: SUGGEST_INTENT_PROMPTS_DEFAULT.QUESTION_TO_ASK,
+    TALKING_POINT: SUGGEST_INTENT_PROMPTS_DEFAULT.TALKING_POINT,
+    ANSWER: SUGGEST_INTENT_PROMPTS_DEFAULT.ANSWER,
+    FACT_CHECK: SUGGEST_INTENT_PROMPTS_DEFAULT.FACT_CHECK,
+  }
+  const truncationEvents: Record<string, number | boolean> = {}
+
+  for (const key of INTENT_PROMPT_KEYS) {
+    const value = input[key]
+    if (typeof value === 'undefined') {
+      continue
+    }
+    if (typeof value !== 'string') return { ok: false }
+    const capped = capField(
+      value.trim(),
+      MAX_INTENT_PROMPT_CHARS,
+      INTENT_PROMPT_METRIC_PREFIX[key],
+    )
+    intentPrompts[key] = capped.value
+    Object.assign(truncationEvents, capped.events)
+  }
+
+  return { ok: true, intentPrompts, truncationEvents }
+}
+
+export function parseSuggestRequestBody(rawBody: unknown): ParseSuccess | ParseFailure {
+  if (!isRecord(rawBody)) {
+    return { ok: false, error: 'invalid request shape' }
+  }
+  if ('prompt' in rawBody || 'transcript' in rawBody) {
+    return { ok: false, error: 'invalid request shape' }
+  }
+
+  if (
+    !('transcriptTail' in rawBody) ||
+    !('rollingSummary' in rawBody) ||
+    !('priorBatchesText' in rawBody)
+  ) {
+    return { ok: false, error: 'invalid request shape' }
+  }
+
+  if (
+    typeof rawBody.transcriptTail !== 'string' ||
+    typeof rawBody.rollingSummary !== 'string' ||
+    typeof rawBody.priorBatchesText !== 'string'
+  ) {
+    return { ok: false, error: 'invalid field type' }
+  }
+  if (typeof rawBody.apiKey !== 'undefined' && typeof rawBody.apiKey !== 'string') {
+    return { ok: false, error: 'invalid field type' }
+  }
+  if (
+    typeof rawBody.meetingKind !== 'undefined' &&
+    rawBody.meetingKind !== null &&
+    typeof rawBody.meetingKind !== 'string'
+  ) {
+    return { ok: false, error: 'invalid field type' }
+  }
+
+  const intentPromptsResult = normalizeIntentPrompts(rawBody.intentPrompts)
+  if (!intentPromptsResult.ok) {
+    return { ok: false, error: 'invalid field type' }
+  }
+
+  const transcript = capField(
+    rawBody.transcriptTail.trim(),
+    MAX_TRANSCRIPT_CHARS,
+    'transcript',
+  )
+  const summary = capField(
+    rawBody.rollingSummary.trim(),
+    MAX_ROLLING_SUMMARY_CHARS,
+    'summary',
+  )
+  const priorBatches = capField(
+    rawBody.priorBatchesText.trim(),
+    MAX_PRIOR_BATCHES_CHARS,
+    'priorBatches',
+  )
+  const meetingKind =
+    typeof rawBody.meetingKind === 'string' &&
+    VALID_MEETING_KINDS.has(rawBody.meetingKind as MeetingKind)
+      ? (rawBody.meetingKind as MeetingKind)
+      : undefined
+
+  return {
+    ok: true,
+    body: {
+      transcriptTail: transcript.value,
+      rollingSummary: summary.value,
+      priorBatchesText: priorBatches.value,
+      meetingKind,
+      intentPrompts: intentPromptsResult.intentPrompts,
+      apiKey: typeof rawBody.apiKey === 'string' ? rawBody.apiKey.trim() : '',
+      truncationEvents: {
+        ...transcript.events,
+        ...summary.events,
+        ...priorBatches.events,
+        ...intentPromptsResult.truncationEvents,
+      },
+    },
+  }
 }
 
 export function normalizeCards(input: unknown): SuggestionCard[] {
@@ -291,11 +487,9 @@ async function createSuggestCompletion(
   }
 
   try {
-    const completion = await groq.chat.completions.create(
-      {
-        ...baseRequest,
-      },
-    )
+    const completion = await groq.chat.completions.create({
+      ...baseRequest,
+    })
 
     return {
       content: completion.choices[0]?.message?.content ?? '{}',
@@ -306,7 +500,6 @@ async function createSuggestCompletion(
       throw err
     }
     return {
-      // Keep the pipeline alive on JSON-shape failures.
       content: '{"cards":[]}',
       usedJsonFallback: true,
     }
@@ -315,16 +508,27 @@ async function createSuggestCompletion(
 
 export async function POST(request: Request) {
   const startedAt = Date.now()
-  let body: { transcript?: string; prompt?: string; apiKey?: string }
+  let rawBody: unknown
   try {
-    body = await request.json()
+    rawBody = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const transcript = body.transcript?.trim() ?? ''
-  const prompt = body.prompt?.trim() ?? ''
-  const apiKey = body.apiKey?.trim() ?? ''
+  const parsedBody = parseSuggestRequestBody(rawBody)
+  if (!parsedBody.ok) {
+    return NextResponse.json({ error: parsedBody.error }, { status: 400 })
+  }
+
+  const {
+    transcriptTail,
+    rollingSummary,
+    priorBatchesText,
+    meetingKind,
+    intentPrompts,
+    apiKey,
+    truncationEvents,
+  } = parsedBody.body
   const ip = extractClientIp(request)
 
   if (!apiKey) {
@@ -333,8 +537,37 @@ export async function POST(request: Request) {
   if (!isValidApiKeyFormat(apiKey)) {
     return NextResponse.json({ error: 'Invalid Groq key format.' }, { status: 400 })
   }
-  if (!transcript) {
-    return NextResponse.json({ error: 'No transcript provided' }, { status: 400 })
+
+  const prompt = buildSuggestPrompt(intentPrompts, {
+    recentTranscript: transcriptTail,
+    rollingSummary,
+    priorBatches: priorBatchesText,
+    meetingKind,
+    kindRoleHint: meetingKind ? KIND_ROLE_HINTS[meetingKind] : undefined,
+    kindExampleBlock: meetingKind ? KIND_EXAMPLES[meetingKind] : undefined,
+  })
+  const promptBytes = utf8Bytes(prompt)
+  const baseMetrics = {
+    transcriptChars: transcriptTail.length,
+    summaryChars: rollingSummary.length,
+    priorBatchesChars: priorBatchesText.length,
+    promptBytes,
+    meetingKind: meetingKind ?? null,
+    ...truncationEvents,
+  }
+
+  if (!transcriptTail) {
+    console.log(
+      JSON.stringify({
+        route: 'suggest',
+        status: 'ok_no_transcript',
+        latencyMs: Date.now() - startedAt,
+        cardsOut: 0,
+        degraded: false,
+        ...baseMetrics,
+      }),
+    )
+    return NextResponse.json({ cards: [] })
   }
 
   const rate = checkRateLimit(ip, 'suggest', LIMITS.suggest)
@@ -344,8 +577,8 @@ export async function POST(request: Request) {
         route: 'suggest',
         status: 'rate_limited',
         latencyMs: Date.now() - startedAt,
-        charsIn: transcript.length,
         cardsOut: 0,
+        ...baseMetrics,
       }),
     )
     return NextResponse.json(
@@ -363,11 +596,7 @@ export async function POST(request: Request) {
 
     const primaryMessages: Array<{ role: 'system' | 'user'; content: string }> = [
       { role: 'system', content: prompt },
-      {
-        role: 'user',
-        content:
-          'Generate the suggestion batch now. Return ONLY a JSON object with key "cards". Each card must include type and preview. No markdown and no extra keys.',
-      },
+      { role: 'user', content: 'Generate the suggestion batch JSON now.' },
     ]
     const primaryCompletion = await withTimeout(
       createSuggestCompletion(groq, primaryMessages),
@@ -385,7 +614,7 @@ export async function POST(request: Request) {
           role: 'user',
           content: [
             'RECENT_TRANSCRIPT_TAIL:',
-            takeTail(transcript, REPAIR_TRANSCRIPT_CHARS),
+            takeTail(transcriptTail, REPAIR_TRANSCRIPT_CHARS),
             '',
             'MALFORMED_MODEL_OUTPUT:',
             takeTail(primaryCompletion.content, REPAIR_MODEL_OUTPUT_CHARS),
@@ -416,7 +645,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (cards.length === 0 && hasSubstantiveTranscript(transcript)) {
+    if (cards.length === 0 && hasSubstantiveTranscript(transcriptTail)) {
       attemptsUsed = Math.max(attemptsUsed, 3)
       const forceMessages: Array<{ role: 'system' | 'user'; content: string }> = [
         { role: 'system', content: REPAIR_SYSTEM_PROMPT },
@@ -424,7 +653,7 @@ export async function POST(request: Request) {
           role: 'user',
           content: [
             'RECENT_TRANSCRIPT_TAIL:',
-            takeTail(transcript, REPAIR_TRANSCRIPT_CHARS),
+            takeTail(transcriptTail, REPAIR_TRANSCRIPT_CHARS),
             '',
             'No valid cards were parsed. The transcript has substantive content.',
             'Return exactly 3 cards and do not return {"cards":[]} unless there is truly no meeting substance.',
@@ -457,8 +686,8 @@ export async function POST(request: Request) {
     console.log(
       JSON.stringify({
         route: 'suggest',
+        status: 'ok',
         latencyMs: Date.now() - startedAt,
-        charsIn: transcript.length,
         cardsOut: cards.length,
         waitingLikeEmpty: cards.length === 0,
         partialCards: cards.length < 3,
@@ -467,7 +696,7 @@ export async function POST(request: Request) {
         usedJsonFallback,
         attemptsUsed,
         suggestMaxTokens: SUGGEST_MAX_TOKENS,
-        status: 'ok',
+        ...baseMetrics,
       }),
     )
 
@@ -486,8 +715,8 @@ export async function POST(request: Request) {
           route: 'suggest',
           status: 'timeout',
           latencyMs: Date.now() - startedAt,
-          charsIn: transcript.length,
           cardsOut: 0,
+          ...baseMetrics,
         }),
       )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
@@ -498,9 +727,9 @@ export async function POST(request: Request) {
           route: 'suggest',
           status: 'json_degraded_empty',
           latencyMs: Date.now() - startedAt,
-          charsIn: transcript.length,
           cardsOut: 0,
           suggestMaxTokens: SUGGEST_MAX_TOKENS,
+          ...baseMetrics,
         }),
       )
       return NextResponse.json({ cards: [], degraded: true })
@@ -511,8 +740,8 @@ export async function POST(request: Request) {
         route: 'suggest',
         status: 'error',
         latencyMs: Date.now() - startedAt,
-        charsIn: transcript.length,
         cardsOut: 0,
+        ...baseMetrics,
       }),
     )
     const message = err instanceof Error ? err.message : 'Suggestion failed'

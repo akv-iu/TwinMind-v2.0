@@ -4,7 +4,7 @@ import type { ChatMessage, MeetingKind } from '@/lib/types'
 import { checkRateLimit, LIMITS } from '@/lib/server/rateLimit'
 import { extractClientIp } from '@/lib/server/extractClientIp'
 import { isUpstreamTimeoutError, withTimeout } from '@/lib/server/withTimeout'
-import { buildChatPrompt } from '@/store/settingsSlice'
+import { buildChatPrompt } from '@/lib/promptBuilders'
 
 export const runtime = 'nodejs'
 
@@ -37,6 +37,31 @@ const MAX_HISTORY_TURNS = Number.isFinite(configuredHistoryTurns)
   ? Math.min(Math.max(Math.floor(configuredHistoryTurns), 10), 60)
   : DEFAULT_MAX_HISTORY_TURNS
 
+const MAX_TRANSCRIPT_CHARS = 8000
+const MAX_ROLLING_SUMMARY_CHARS = 1200
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+function capField(
+  value: string,
+  maxChars: number,
+  metricPrefix: string,
+): { value: string; events: Record<string, number | boolean> } {
+  if (value.length <= maxChars) {
+    return { value, events: {} }
+  }
+  return {
+    value: value.slice(0, maxChars),
+    events: {
+      [`${metricPrefix}Truncated`]: true,
+      [`${metricPrefix}TruncatedFrom`]: value.length,
+      [`${metricPrefix}TruncatedTo`]: maxChars,
+    },
+  }
+}
+
 export async function POST(request: Request) {
   const startedAt = Date.now()
   let body: {
@@ -54,9 +79,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const transcript = body.transcript?.trim() ?? ''
+  if (typeof body.transcript !== 'undefined' && typeof body.transcript !== 'string') {
+    return NextResponse.json({ error: 'invalid field type' }, { status: 400 })
+  }
+  if (
+    typeof body.rollingSummary !== 'undefined' &&
+    typeof body.rollingSummary !== 'string'
+  ) {
+    return NextResponse.json({ error: 'invalid field type' }, { status: 400 })
+  }
+  if (typeof body.prompt !== 'undefined' && typeof body.prompt !== 'string') {
+    return NextResponse.json({ error: 'invalid field type' }, { status: 400 })
+  }
+
+  const transcriptCap = capField(
+    body.transcript?.trim() ?? '',
+    MAX_TRANSCRIPT_CHARS,
+    'transcript',
+  )
+  const summaryCap = capField(
+    body.rollingSummary?.trim() ?? '',
+    MAX_ROLLING_SUMMARY_CHARS,
+    'summary',
+  )
+
+  const transcript = transcriptCap.value
   const prompt = body.prompt?.trim() ?? ''
-  const rollingSummary = body.rollingSummary?.trim() ?? ''
+  const rollingSummary = summaryCap.value
   const meetingKind =
     typeof body.meetingKind === 'string' &&
     VALID_MEETING_KINDS.has(body.meetingKind as MeetingKind)
@@ -77,6 +126,25 @@ export async function POST(request: Request) {
   }
   const cleanMessages = messages.filter((m) => !m.isFailed)
   const trimmedMessages = cleanMessages.slice(-MAX_HISTORY_TURNS)
+  const truncationEvents = { ...transcriptCap.events, ...summaryCap.events }
+
+  const systemContent = buildChatPrompt({
+    basePrompt: prompt,
+    rollingSummary,
+    recentTranscript: transcript,
+    meetingKind,
+  })
+  const promptBytes = utf8Bytes(systemContent)
+  const baseMetrics = {
+    transcriptChars: transcript.length,
+    summaryChars: rollingSummary.length,
+    promptBytes,
+    meetingKind: meetingKind ?? null,
+    msgsIn: cleanMessages.length,
+    msgsKept: trimmedMessages.length,
+    historyCap: MAX_HISTORY_TURNS,
+    ...truncationEvents,
+  }
 
   const rate = checkRateLimit(ip, 'chat', LIMITS.chat)
   if (!rate.allowed) {
@@ -85,10 +153,7 @@ export async function POST(request: Request) {
         route: 'chat',
         status: 'rate_limited',
         latencyMs: Date.now() - startedAt,
-        charsIn: transcript.length,
-        msgsIn: cleanMessages.length,
-        msgsKept: trimmedMessages.length,
-        historyCap: MAX_HISTORY_TURNS,
+        ...baseMetrics,
       }),
     )
     return NextResponse.json(
@@ -98,12 +163,6 @@ export async function POST(request: Request) {
   }
 
   const groq = new Groq({ apiKey })
-  const systemContent = buildChatPrompt({
-    basePrompt: prompt,
-    rollingSummary,
-    recentTranscript: transcript,
-    meetingKind,
-  })
 
   const upstream = new AbortController()
   const onAbort = () => upstream.abort()
@@ -140,10 +199,7 @@ export async function POST(request: Request) {
           route: 'chat',
           status: 'timeout',
           latencyMs: Date.now() - startedAt,
-          charsIn: transcript.length,
-          msgsIn: cleanMessages.length,
-          msgsKept: trimmedMessages.length,
-          historyCap: MAX_HISTORY_TURNS,
+          ...baseMetrics,
         }),
       )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
@@ -160,10 +216,7 @@ export async function POST(request: Request) {
         route: 'chat',
         status: 'error',
         latencyMs: Date.now() - startedAt,
-        charsIn: transcript.length,
-        msgsIn: cleanMessages.length,
-        msgsKept: trimmedMessages.length,
-        historyCap: MAX_HISTORY_TURNS,
+        ...baseMetrics,
       }),
     )
     const message = err instanceof Error ? err.message : 'Chat request failed'
@@ -175,10 +228,7 @@ export async function POST(request: Request) {
       route: 'chat',
       status: 'ok',
       latencyMs: Date.now() - startedAt,
-      charsIn: transcript.length,
-      msgsIn: cleanMessages.length,
-      msgsKept: trimmedMessages.length,
-      historyCap: MAX_HISTORY_TURNS,
+      ...baseMetrics,
     }),
   )
 

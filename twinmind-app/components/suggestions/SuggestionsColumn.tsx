@@ -13,10 +13,7 @@ import {
   refreshSummary,
   shouldRefreshSummary,
 } from '@/lib/summary'
-import { buildSuggestPrompt } from '@/store/settingsSlice'
 import {
-  KIND_EXAMPLES,
-  KIND_ROLE_HINTS,
   classifyMeeting,
   shouldClassify,
 } from '@/lib/meetingKind'
@@ -111,18 +108,12 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       .flatMap((batch) => batch.cards.map((card) => `${formatCardType(card.type)}: ${card.preview}`))
       .join('\n')
 
-    const mergedPrompt = buildSuggestPrompt(suggestIntentPrompts, {
-      recentTranscript,
-      rollingSummary: summary,
-      priorBatches,
-      meetingKind: meetingKind ?? undefined,
-      kindRoleHint: meetingKind ? KIND_ROLE_HINTS[meetingKind] : undefined,
-      kindExampleBlock: meetingKind ? KIND_EXAMPLES[meetingKind] : undefined,
-    })
-
     const payload = {
-      transcript: recentTranscript,
-      prompt: mergedPrompt,
+      transcriptTail: recentTranscript,
+      rollingSummary: summary,
+      priorBatchesText: priorBatches,
+      meetingKind: meetingKind ?? undefined,
+      intentPrompts: suggestIntentPrompts,
       apiKey: key,
     }
 
@@ -175,10 +166,16 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
 
       if (refreshNeeded && !isSummaryRefreshingRef.current) {
         const priorSummary = useStore.getState().summary
+        const autoHealDrift = priorSummary.length > 1500
+        if (autoHealDrift && process.env.NODE_ENV !== 'production') {
+          console.warn(
+            '[summary:auto-heal] prior summary exceeded 1500 chars; forcing full re-summarize.',
+          )
+        }
         const summaryInput = buildSummaryInput({
           transcriptLines,
           suggestContextChars,
-          priorSummary,
+          priorSummary: autoHealDrift ? '' : priorSummary,
         })
 
         if (summaryInput.transcript.trim()) {
