@@ -52,15 +52,15 @@ describe('normalizeCards', () => {
     expect(result[0].type).toBe('QUESTION_TO_ASK')
   })
 
-  it('reduces three-of-same-type outputs to one card', () => {
+  it('keeps three cards even when all types are the same', () => {
     const duplicateHeavy = [
       { type: 'QUESTION_TO_ASK', preview: 'What is the release date for launch?' },
       { type: 'QUESTION_TO_ASK', preview: 'Who owns the migration sign-off now?' },
       { type: 'QUESTION_TO_ASK', preview: 'Which blocker is highest risk today?' },
     ]
     const result = normalizeCards(duplicateHeavy)
-    expect(result).toHaveLength(1)
-    expect(result[0].type).toBe('QUESTION_TO_ASK')
+    expect(result).toHaveLength(3)
+    expect(result.every((card) => card.type === 'QUESTION_TO_ASK')).toBe(true)
   })
 
   it('keeps three cards when at least two types are present', () => {

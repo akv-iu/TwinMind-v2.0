@@ -14,8 +14,16 @@ const VALID_TYPES: ReadonlySet<CardType> = new Set([
   'FACT_CHECK',
 ])
 
+const DEFAULT_SUGGEST_MAX_TOKENS = 560
+const configuredSuggestMaxTokens = Number(
+  process.env.SUGGEST_MAX_TOKENS ?? DEFAULT_SUGGEST_MAX_TOKENS,
+)
+const SUGGEST_MAX_TOKENS = Number.isFinite(configuredSuggestMaxTokens)
+  ? Math.min(Math.max(Math.floor(configuredSuggestMaxTokens), 240), 900)
+  : DEFAULT_SUGGEST_MAX_TOKENS
+
 const RETRY_NUDGE_PROMPT =
-  'Your previous response format was invalid. Return EXACTLY 3 lines in this format: TYPE | preview. Valid TYPE values: QUESTION_TO_ASK, TALKING_POINT, ANSWER, FACT_CHECK.'
+  'Your previous response was not valid enough. Return ONLY a JSON object with key "cards". Each card must have: type (QUESTION_TO_ASK|TALKING_POINT|ANSWER|FACT_CHECK) and preview (10-180 chars). Produce exactly 3 cards unless there is no substance, then return {"cards":[]}.'
 
 function stripJsonFences(raw: string): string {
   const trimmed = raw.trim()
@@ -35,7 +43,9 @@ function extractFirstJsonObject(raw: string): string {
 
 function fitPreview(value: string): string {
   const trimmed = value.replace(/\s+/g, ' ').trim()
-  if (trimmed.length === 0) return 'Clarify the most recent point before deciding next steps.'
+  if (trimmed.length === 0) {
+    return 'Clarify the most recent point before deciding next steps.'
+  }
   if (trimmed.length >= 10 && trimmed.length <= 180) return trimmed
   if (trimmed.length < 10) return `${trimmed}. Please clarify this point.`.slice(0, 180)
   return `${trimmed.slice(0, 177)}...`
@@ -54,10 +64,35 @@ function parseCardsFromPlainText(raw: string): SuggestionCard[] {
     const match = cleaned.match(
       /^(QUESTION_TO_ASK|TALKING_POINT|ANSWER|FACT_CHECK)\s*[\|\:\-]\s*(.+)$/i,
     )
-    if (!match) continue
-    const type = match[1].toUpperCase() as CardType
-    const preview = fitPreview(match[2] ?? '')
-    if (!VALID_TYPES.has(type)) continue
+    let type: CardType
+    let preview: string
+
+    if (match) {
+      type = match[1].toUpperCase() as CardType
+      preview = fitPreview(match[2] ?? '')
+      if (!VALID_TYPES.has(type)) continue
+    } else {
+      preview = fitPreview(cleaned)
+      const lower = cleaned.toLowerCase()
+      if (cleaned.endsWith('?')) type = 'QUESTION_TO_ASK'
+      else if (
+        lower.includes('verify') ||
+        lower.includes('double-check') ||
+        lower.includes('fact check') ||
+        lower.includes('check if')
+      ) {
+        type = 'FACT_CHECK'
+      } else if (
+        lower.startsWith('answer') ||
+        lower.includes('the answer is') ||
+        lower.includes('respond with')
+      ) {
+        type = 'ANSWER'
+      } else {
+        type = 'TALKING_POINT'
+      }
+    }
+
     cards.push({ type, preview })
   }
 
@@ -79,31 +114,6 @@ function coerceCardsFromModelContent(content: string): SuggestionCard[] {
   }
 
   return parseCardsFromPlainText(stripped)
-}
-
-function buildDeterministicFallbackCards(transcript: string): SuggestionCard[] {
-  const lastLine =
-    transcript
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .at(-1) ?? ''
-  const topic = fitPreview(lastLine)
-
-  return [
-    {
-      type: 'QUESTION_TO_ASK',
-      preview: fitPreview(`Can we clarify "${topic}" and agree on next owner/actions?`),
-    },
-    {
-      type: 'TALKING_POINT',
-      preview: fitPreview(`Recent discussion emphasized "${topic}" as a key point.`),
-    },
-    {
-      type: 'FACT_CHECK',
-      preview: fitPreview(`Double-check the main claim around "${topic}" before committing.`),
-    },
-  ]
 }
 
 function safeSerializeError(error: unknown): string {
@@ -213,19 +223,12 @@ export function normalizeCards(input: unknown): SuggestionCard[] {
     normalized.push({ type: typed, preview: trimmedPreview })
   }
 
-  if (normalized.length === 3) {
-    const uniqueTypes = new Set(normalized.map((card) => card.type))
-    if (uniqueTypes.size === 1) {
-      return [normalized[0]]
-    }
-  }
-
   return normalized
 }
 
 interface CompletionResult {
   content: string
-  degraded: boolean
+  usedJsonFallback: boolean
 }
 
 async function createSuggestCompletion(
@@ -237,7 +240,7 @@ async function createSuggestCompletion(
     messages,
     temperature: 0.4,
     top_p: 0.9,
-    max_tokens: 280,
+    max_tokens: SUGGEST_MAX_TOKENS,
   }
 
   try {
@@ -249,7 +252,7 @@ async function createSuggestCompletion(
 
     return {
       content: completion.choices[0]?.message?.content ?? '{}',
-      degraded: false,
+      usedJsonFallback: false,
     }
   } catch (err) {
     if (!shouldFallbackToJsonObject(err)) {
@@ -258,7 +261,7 @@ async function createSuggestCompletion(
     return {
       // Keep the pipeline alive on JSON-shape failures.
       content: '{"cards":[]}',
-      degraded: true,
+      usedJsonFallback: true,
     }
   }
 }
@@ -307,7 +310,7 @@ export async function POST(request: Request) {
   try {
     const groq = new Groq({ apiKey })
     let cards: SuggestionCard[] = []
-    let degraded = false
+    let usedJsonFallback = false
     let attemptsUsed = 0
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -317,7 +320,7 @@ export async function POST(request: Request) {
         {
           role: 'user',
           content:
-            'Generate suggestions now. Return EXACTLY 3 lines in this format: TYPE | preview. Valid TYPE values: QUESTION_TO_ASK, TALKING_POINT, ANSWER, FACT_CHECK.',
+            'Generate the suggestion batch now. Return ONLY a JSON object with key "cards". Each card must include type and preview. No markdown and no extra keys.',
         },
       ]
       if (attempt === 1) {
@@ -329,18 +332,10 @@ export async function POST(request: Request) {
         12_000,
         'suggest',
       )
-      degraded = degraded || completion.degraded || attempt === 1
+      usedJsonFallback = usedJsonFallback || completion.usedJsonFallback
 
       cards = coerceCardsFromModelContent(completion.content)
       if (cards.length >= 2 || attempt === 1) break
-    }
-
-    if (cards.length === 0) {
-      cards = buildDeterministicFallbackCards(transcript)
-      degraded = true
-    }
-    if (cards.length < 3) {
-      degraded = true
     }
 
     console.log(
@@ -349,13 +344,17 @@ export async function POST(request: Request) {
         latencyMs: Date.now() - startedAt,
         charsIn: transcript.length,
         cardsOut: cards.length,
-        degraded,
+        partialCards: cards.length < 3,
+        usedJsonFallback,
         attemptsUsed,
+        suggestMaxTokens: SUGGEST_MAX_TOKENS,
         status: 'ok',
       }),
     )
 
-    return NextResponse.json(degraded ? { cards, degraded: true } : { cards })
+    return NextResponse.json(
+      usedJsonFallback ? { cards, degraded: true } : { cards },
+    )
   } catch (err) {
     if (isUpstreamTimeoutError(err)) {
       console.log(
@@ -370,17 +369,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
     }
     if (shouldFallbackToJsonObject(err)) {
-      const cards = buildDeterministicFallbackCards(transcript)
       console.log(
         JSON.stringify({
           route: 'suggest',
-          status: 'json_degraded_fallback_cards',
+          status: 'json_degraded_empty',
           latencyMs: Date.now() - startedAt,
           charsIn: transcript.length,
-          cardsOut: cards.length,
+          cardsOut: 0,
+          suggestMaxTokens: SUGGEST_MAX_TOKENS,
         }),
       )
-      return NextResponse.json({ cards, degraded: true })
+      return NextResponse.json({ cards: [], degraded: true })
     }
 
     console.log(

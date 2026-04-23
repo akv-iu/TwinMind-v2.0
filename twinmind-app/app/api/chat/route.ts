@@ -29,7 +29,13 @@ const VALID_MEETING_KINDS: ReadonlySet<MeetingKind> = new Set([
   'other',
 ])
 
-const MAX_HISTORY_TURNS = 20
+const DEFAULT_MAX_HISTORY_TURNS = 28
+const configuredHistoryTurns = Number(
+  process.env.CHAT_MAX_HISTORY_TURNS ?? DEFAULT_MAX_HISTORY_TURNS,
+)
+const MAX_HISTORY_TURNS = Number.isFinite(configuredHistoryTurns)
+  ? Math.min(Math.max(Math.floor(configuredHistoryTurns), 10), 60)
+  : DEFAULT_MAX_HISTORY_TURNS
 
 export async function POST(request: Request) {
   const startedAt = Date.now()
@@ -82,6 +88,7 @@ export async function POST(request: Request) {
         charsIn: transcript.length,
         msgsIn: cleanMessages.length,
         msgsKept: trimmedMessages.length,
+        historyCap: MAX_HISTORY_TURNS,
       }),
     )
     return NextResponse.json(
@@ -136,6 +143,7 @@ export async function POST(request: Request) {
           charsIn: transcript.length,
           msgsIn: cleanMessages.length,
           msgsKept: trimmedMessages.length,
+          historyCap: MAX_HISTORY_TURNS,
         }),
       )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
@@ -155,6 +163,7 @@ export async function POST(request: Request) {
         charsIn: transcript.length,
         msgsIn: cleanMessages.length,
         msgsKept: trimmedMessages.length,
+        historyCap: MAX_HISTORY_TURNS,
       }),
     )
     const message = err instanceof Error ? err.message : 'Chat request failed'
@@ -169,6 +178,7 @@ export async function POST(request: Request) {
       charsIn: transcript.length,
       msgsIn: cleanMessages.length,
       msgsKept: trimmedMessages.length,
+      historyCap: MAX_HISTORY_TURNS,
     }),
   )
 
