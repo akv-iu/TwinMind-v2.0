@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import Groq from 'groq-sdk'
 import type { CardType, SuggestionCard } from '@/lib/types'
 import { checkRateLimit, LIMITS } from '@/lib/server/rateLimit'
+import { extractClientIp } from '@/lib/server/extractClientIp'
 import { isUpstreamTimeoutError, withTimeout } from '@/lib/server/withTimeout'
 
 export const runtime = 'nodejs'
@@ -13,40 +14,8 @@ const VALID_TYPES: ReadonlySet<CardType> = new Set([
   'FACT_CHECK',
 ])
 
-const SUGGEST_RESPONSE_SCHEMA = {
-  name: 'suggestion_batch',
-  strict: true,
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      cards: {
-        type: 'array',
-        minItems: 0,
-        maxItems: 3,
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            type: {
-              enum: ['QUESTION_TO_ASK', 'TALKING_POINT', 'ANSWER', 'FACT_CHECK'],
-            },
-            preview: {
-              type: 'string',
-              minLength: 10,
-              maxLength: 180,
-            },
-          },
-          required: ['type', 'preview'],
-        },
-      },
-    },
-    required: ['cards'],
-  },
-} as const
-
 const RETRY_NUDGE_PROMPT =
-  'Your previous response had no valid cards. Produce exactly 3 grounded suggestions now, or return {"cards": []} if the transcript has no substantive content.'
+  'Your previous response format was invalid. Return EXACTLY 3 lines in this format: TYPE | preview. Valid TYPE values: QUESTION_TO_ASK, TALKING_POINT, ANSWER, FACT_CHECK.'
 
 function stripJsonFences(raw: string): string {
   const trimmed = raw.trim()
@@ -56,47 +25,160 @@ function stripJsonFences(raw: string): string {
   return trimmed
 }
 
-function shouldFallbackToJsonObject(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false
-  const rec = error as Record<string, unknown>
-  const nested =
-    rec.error && typeof rec.error === 'object'
-      ? (rec.error as Record<string, unknown>)
-      : null
-
-  const messageParts = [
-    error instanceof Error ? error.message : '',
-    typeof rec.message === 'string' ? rec.message : '',
-    typeof nested?.message === 'string' ? nested.message : '',
-  ]
-  const message = messageParts.join(' ').toLowerCase()
-
-  const codeParts = [
-    typeof rec.code === 'string' ? rec.code : '',
-    typeof nested?.code === 'string' ? nested.code : '',
-    typeof rec.type === 'string' ? rec.type : '',
-    typeof nested?.type === 'string' ? nested.type : '',
-  ]
-  const codes = codeParts.join(' ').toLowerCase()
-
-  return (
-    codes.includes('json_validate_failed') ||
-    codes.includes('failed_generation') ||
-    codes.includes('invalid_request_error') ||
-    message.includes('failed to validate json') ||
-    message.includes('failed to generate json') ||
-    message.includes('failed generation') ||
-    message.includes('failed_generation') ||
-    message.includes('json_validate_failed') ||
-    message.includes('json_schema') ||
-    message.includes('response_format') ||
-    message.includes('schema') ||
-    message.includes('strict')
-  )
+function extractFirstJsonObject(raw: string): string {
+  const start = raw.indexOf('{')
+  if (start === -1) return raw
+  const end = raw.lastIndexOf('}')
+  if (end === -1 || end < start) return raw
+  return raw.slice(start, end + 1)
 }
 
-function extractClientIp(request: Request): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
+function fitPreview(value: string): string {
+  const trimmed = value.replace(/\s+/g, ' ').trim()
+  if (trimmed.length === 0) return 'Clarify the most recent point before deciding next steps.'
+  if (trimmed.length >= 10 && trimmed.length <= 180) return trimmed
+  if (trimmed.length < 10) return `${trimmed}. Please clarify this point.`.slice(0, 180)
+  return `${trimmed.slice(0, 177)}...`
+}
+
+function parseCardsFromPlainText(raw: string): SuggestionCard[] {
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const cards: SuggestionCard[] = []
+  for (const line of lines) {
+    if (cards.length >= 3) break
+    const cleaned = line.replace(/^[\-\*\d\.\)\s]+/, '')
+    const match = cleaned.match(
+      /^(QUESTION_TO_ASK|TALKING_POINT|ANSWER|FACT_CHECK)\s*[\|\:\-]\s*(.+)$/i,
+    )
+    if (!match) continue
+    const type = match[1].toUpperCase() as CardType
+    const preview = fitPreview(match[2] ?? '')
+    if (!VALID_TYPES.has(type)) continue
+    cards.push({ type, preview })
+  }
+
+  return cards
+}
+
+function coerceCardsFromModelContent(content: string): SuggestionCard[] {
+  const stripped = stripJsonFences(content)
+  try {
+    return normalizeCards(JSON.parse(stripped))
+  } catch {
+    // fall through
+  }
+
+  try {
+    return normalizeCards(JSON.parse(extractFirstJsonObject(stripped)))
+  } catch {
+    // fall through
+  }
+
+  return parseCardsFromPlainText(stripped)
+}
+
+function buildDeterministicFallbackCards(transcript: string): SuggestionCard[] {
+  const lastLine =
+    transcript
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) ?? ''
+  const topic = fitPreview(lastLine)
+
+  return [
+    {
+      type: 'QUESTION_TO_ASK',
+      preview: fitPreview(`Can we clarify "${topic}" and agree on next owner/actions?`),
+    },
+    {
+      type: 'TALKING_POINT',
+      preview: fitPreview(`Recent discussion emphasized "${topic}" as a key point.`),
+    },
+    {
+      type: 'FACT_CHECK',
+      preview: fitPreview(`Double-check the main claim around "${topic}" before committing.`),
+    },
+  ]
+}
+
+function safeSerializeError(error: unknown): string {
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return ''
+  }
+}
+
+interface GroqErrorLike {
+  status?: number
+  response?: {
+    status?: number
+    error?: { code?: string; type?: string; message?: string }
+    data?: {
+      error?: { code?: string; type?: string; message?: string }
+    }
+  }
+  cause?: {
+    message?: string
+  }
+  error?: { code?: string; type?: string; message?: string }
+  code?: string
+  type?: string
+  message?: string
+}
+
+function shouldFallbackToJsonObject(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const rec = error as GroqErrorLike
+
+  // Primary: structured fields from SDK error payload.
+  const code = (
+    rec.error?.code ??
+    rec.code ??
+    rec.response?.error?.code ??
+    rec.response?.data?.error?.code ??
+    ''
+  ).toLowerCase()
+  const type = (
+    rec.error?.type ??
+    rec.type ??
+    rec.response?.error?.type ??
+    rec.response?.data?.error?.type ??
+    ''
+  ).toLowerCase()
+  const status = rec.status ?? rec.response?.status
+  if (code.includes('json_validate_failed')) return true
+  if (code.includes('failed_generation')) return true
+  if (type.includes('invalid_request_error') && status === 400) return true
+
+  // Secondary: message matching fallback for shape variance.
+  const message = [
+    rec.error?.message ?? '',
+    rec.response?.error?.message ?? '',
+    rec.response?.data?.error?.message ?? '',
+    rec.cause?.message ?? '',
+    rec.message ?? '',
+    error instanceof Error ? error.message : '',
+  ]
+    .join(' ')
+    .toLowerCase()
+  const serialized = safeSerializeError(error).toLowerCase()
+  return (
+    message.includes('json_validate_failed') ||
+    message.includes('failed_generation') ||
+    message.includes('failed to validate json') ||
+    message.includes('failed to generate json') ||
+    message.includes('response_format') ||
+    message.includes('json_schema') ||
+    message.includes('strict') ||
+    serialized.includes('json_validate_failed') ||
+    serialized.includes('failed_generation')
+  )
 }
 
 function isValidApiKeyFormat(value: string): boolean {
@@ -155,17 +237,13 @@ async function createSuggestCompletion(
     messages,
     temperature: 0.4,
     top_p: 0.9,
-    max_tokens: 600,
+    max_tokens: 280,
   }
 
   try {
     const completion = await groq.chat.completions.create(
       {
         ...baseRequest,
-        response_format: {
-          type: 'json_schema',
-          json_schema: SUGGEST_RESPONSE_SCHEMA,
-        },
       },
     )
 
@@ -177,28 +255,10 @@ async function createSuggestCompletion(
     if (!shouldFallbackToJsonObject(err)) {
       throw err
     }
-
-    try {
-      const completion = await groq.chat.completions.create(
-        {
-          ...baseRequest,
-          response_format: { type: 'json_object' },
-        },
-      )
-
-      return {
-        content: completion.choices[0]?.message?.content ?? '{}',
-        degraded: true,
-      }
-    } catch (fallbackErr) {
-      if (!shouldFallbackToJsonObject(fallbackErr)) {
-        throw fallbackErr
-      }
-      return {
-        // Keep the pipeline alive on repeated JSON-validation failures.
-        content: '{"cards":[]}',
-        degraded: true,
-      }
+    return {
+      // Keep the pipeline alive on JSON-shape failures.
+      content: '{"cards":[]}',
+      degraded: true,
     }
   }
 }
@@ -248,11 +308,17 @@ export async function POST(request: Request) {
     const groq = new Groq({ apiKey })
     let cards: SuggestionCard[] = []
     let degraded = false
+    let attemptsUsed = 0
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      attemptsUsed = attempt + 1
       const messages: Array<{ role: 'system' | 'user'; content: string }> = [
         { role: 'system', content: prompt },
-        { role: 'user', content: 'Generate the suggestion batch JSON now.' },
+        {
+          role: 'user',
+          content:
+            'Generate suggestions now. Return EXACTLY 3 lines in this format: TYPE | preview. Valid TYPE values: QUESTION_TO_ASK, TALKING_POINT, ANSWER, FACT_CHECK.',
+        },
       ]
       if (attempt === 1) {
         messages.push({ role: 'system', content: RETRY_NUDGE_PROMPT })
@@ -265,30 +331,14 @@ export async function POST(request: Request) {
       )
       degraded = degraded || completion.degraded || attempt === 1
 
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(stripJsonFences(completion.content))
-      } catch {
-        if (attempt === 0) {
-          degraded = true
-          continue
-        }
-        console.log(
-          JSON.stringify({
-            route: 'suggest',
-            status: 'error',
-            latencyMs: Date.now() - startedAt,
-            charsIn: transcript.length,
-            cardsOut: 0,
-          }),
-        )
-        return NextResponse.json({ error: 'invalid model output' }, { status: 502 })
-      }
-
-      cards = normalizeCards(parsed)
+      cards = coerceCardsFromModelContent(completion.content)
       if (cards.length >= 2 || attempt === 1) break
     }
 
+    if (cards.length === 0) {
+      cards = buildDeterministicFallbackCards(transcript)
+      degraded = true
+    }
     if (cards.length < 3) {
       degraded = true
     }
@@ -299,6 +349,8 @@ export async function POST(request: Request) {
         latencyMs: Date.now() - startedAt,
         charsIn: transcript.length,
         cardsOut: cards.length,
+        degraded,
+        attemptsUsed,
         status: 'ok',
       }),
     )
@@ -318,16 +370,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
     }
     if (shouldFallbackToJsonObject(err)) {
+      const cards = buildDeterministicFallbackCards(transcript)
       console.log(
         JSON.stringify({
           route: 'suggest',
-          status: 'json_degraded_empty',
+          status: 'json_degraded_fallback_cards',
           latencyMs: Date.now() - startedAt,
           charsIn: transcript.length,
-          cardsOut: 0,
+          cardsOut: cards.length,
         }),
       )
-      return NextResponse.json({ cards: [], degraded: true })
+      return NextResponse.json({ cards, degraded: true })
     }
 
     console.log(

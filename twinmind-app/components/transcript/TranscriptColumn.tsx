@@ -29,6 +29,7 @@ export function TranscriptColumn() {
   const {
     isRecording,
     isProcessing,
+    isMicMuted,
     hasMicPermission,
     error,
     requestMicrophoneAccess,
@@ -38,6 +39,12 @@ export function TranscriptColumn() {
   const transcriptLines = useStore((s) => s.transcriptLines)
   const batches = useStore((s) => s.batches)
   const chatMessages = useStore((s) => s.chatMessages)
+  const summary = useStore((s) => s.summary)
+  const meetingKind = useStore((s) => s.meetingKind)
+  const suggestIntentPrompts = useStore((s) => s.suggestIntentPrompts)
+  const chatPrompt = useStore((s) => s.chatPrompt)
+  const suggestContextChars = useStore((s) => s.suggestContextChars)
+  const chatContextChars = useStore((s) => s.chatContextChars)
   const apiKey = useStore((s) => s.groqApiKey)
   const promptedRef = useRef(false)
 
@@ -57,7 +64,16 @@ export function TranscriptColumn() {
   }
 
   function handleExport() {
-    exportSession(transcriptLines, batches, chatMessages)
+    exportSession(transcriptLines, batches, chatMessages, {
+      summary,
+      meetingKind: meetingKind ?? null,
+      settingsSnapshot: {
+        suggestIntentPrompts,
+        chatPrompt,
+        suggestContextChars,
+        chatContextChars,
+      },
+    })
   }
 
   return (
@@ -80,6 +96,11 @@ export function TranscriptColumn() {
         )}
         {error && !noKey && (
           <p className="px-2 text-center text-xs text-red-400">{error}</p>
+        )}
+        {isMicMuted && isRecording && !noKey && (
+          <p className="px-2 text-center text-xs text-amber-400">
+            Mic appears muted. Check your device or unmute.
+          </p>
         )}
         {!noKey && hasMicPermission === false && !error && (
           <p className="px-2 text-center text-xs text-zinc-500">

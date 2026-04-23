@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server'
 import Groq from 'groq-sdk'
 import { checkRateLimit, LIMITS } from '@/lib/server/rateLimit'
+import { extractClientIp } from '@/lib/server/extractClientIp'
 import { isUpstreamTimeoutError, withTimeout } from '@/lib/server/withTimeout'
 
 export const runtime = 'nodejs'
-
-function extractClientIp(request: Request): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
-}
 
 function isValidApiKeyFormat(value: string): boolean {
   return value.startsWith('gsk_') && value.length >= 20

@@ -8,8 +8,18 @@ import { formatCardType } from './SuggestionCard'
 import { useStore } from '@/store'
 import type { SuggestionCard, TranscriptLine } from '@/lib/types'
 import { takeTailByChars } from '@/lib/context'
-import { refreshSummary, shouldRefreshSummary } from '@/lib/summary'
+import {
+  buildSummaryInput,
+  refreshSummary,
+  shouldRefreshSummary,
+} from '@/lib/summary'
 import { buildSuggestPrompt } from '@/store/settingsSlice'
+import {
+  KIND_EXAMPLES,
+  KIND_ROLE_HINTS,
+  classifyMeeting,
+  shouldClassify,
+} from '@/lib/meetingKind'
 import {
   INVALID_GROQ_KEY_COPY,
   RATE_LIMITED_COPY,
@@ -46,6 +56,8 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const getRecentBatches = useStore((s) => s.getRecentBatches)
   const summary = useStore((s) => s.summary)
   const setSummary = useStore((s) => s.setSummary)
+  const meetingKind = useStore((s) => s.meetingKind)
+  const setMeetingKind = useStore((s) => s.setMeetingKind)
   const transcriptLines = useStore((s) => s.transcriptLines)
   const isRecording = useStore((s) => s.isRecording)
   const apiKey = useStore((s) => s.groqApiKey)
@@ -65,6 +77,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const lastFireHashRef = useRef<string>('')
   const fireSuggestionsRef = useRef<() => Promise<void>>(async () => {})
   const isSummaryRefreshingRef = useRef(false)
+  const isClassifyingRef = useRef(false)
   const lastSummaryTranscriptCharsRef = useRef(0)
   const lastSummaryBatchCountRef = useRef(0)
 
@@ -100,6 +113,9 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       recentTranscript,
       rollingSummary: summary,
       priorBatches,
+      meetingKind: meetingKind ?? undefined,
+      kindRoleHint: meetingKind ? KIND_ROLE_HINTS[meetingKind] : undefined,
+      kindExampleBlock: meetingKind ? KIND_EXAMPLES[meetingKind] : undefined,
     })
 
     const payload = {
@@ -148,26 +164,56 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
         lastSummaryBatchCount: lastSummaryBatchCountRef.current,
       })
 
-      if (!refreshNeeded || isSummaryRefreshingRef.current) return
+      if (refreshNeeded && !isSummaryRefreshingRef.current) {
+        const priorSummary = useStore.getState().summary
+        const summaryInput = buildSummaryInput({
+          transcriptLines,
+          suggestContextChars,
+          priorSummary,
+        })
 
-      lastSummaryTranscriptCharsRef.current = transcriptChars
-      lastSummaryBatchCountRef.current = nextBatchCount
-      isSummaryRefreshingRef.current = true
+        if (summaryInput.transcript.trim()) {
+          isSummaryRefreshingRef.current = true
+          void refreshSummary({
+            transcript: summaryInput.transcript,
+            apiKey: key,
+            priorSummary: summaryInput.priorSummary,
+          })
+            .then((nextSummary) => {
+              if (!nextSummary) return
+              setSummary(nextSummary)
+              lastSummaryTranscriptCharsRef.current = transcriptChars
+              lastSummaryBatchCountRef.current = nextBatchCount
+            })
+            .catch(() => {
+              // summary failures are non-fatal for live suggestions
+            })
+            .finally(() => {
+              isSummaryRefreshingRef.current = false
+            })
+        }
+      }
 
-      const summaryInput = takeTailByChars(
-        transcriptLines,
-        Math.max(suggestContextChars * 6, 24_000),
-      )
-      void refreshSummary(summaryInput, key)
-        .then((nextSummary) => {
-          if (nextSummary) setSummary(nextSummary)
-        })
-        .catch(() => {
-          // summary failures are non-fatal for live suggestions
-        })
-        .finally(() => {
-          isSummaryRefreshingRef.current = false
-        })
+      const shouldRunClassify = shouldClassify({
+        meetingKind,
+        batchCount: nextBatchCount,
+        transcriptChars,
+        inFlight: isClassifyingRef.current,
+      })
+      if (shouldRunClassify) {
+        isClassifyingRef.current = true
+        const classifyInput = takeTailByChars(transcriptLines, 6000)
+        void classifyMeeting(classifyInput, key)
+          .then((kind) => {
+            setMeetingKind(kind)
+          })
+          .catch(() => {
+            // classification failures are non-fatal
+          })
+          .finally(() => {
+            isClassifyingRef.current = false
+          })
+      }
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') return
       const message = err instanceof Error ? err.message : ''
@@ -194,6 +240,8 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
     suggestContextChars,
     suggestIntentPrompts,
     summary,
+    meetingKind,
+    setMeetingKind,
     transcriptLines,
   ])
 
@@ -242,6 +290,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
 
   const batchCount = batches.length
   const badgeLabel = batchCount === 1 ? '1 BATCH' : `${batchCount} BATCHES`
+  const meetingKindLabel = meetingKind ? meetingKind.replace('_', ' ') : ''
   const noKey = !apiKey.trim()
 
   return (
@@ -252,6 +301,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
         badge={
           <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-zinc-400">
             {badgeLabel}
+            {meetingKindLabel ? ` \u00B7 ${meetingKindLabel}` : ''}
           </span>
         }
       />

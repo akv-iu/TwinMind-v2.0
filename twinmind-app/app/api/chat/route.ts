@@ -1,8 +1,10 @@
 import Groq from 'groq-sdk'
 import { NextResponse } from 'next/server'
-import type { ChatMessage } from '@/lib/types'
+import type { ChatMessage, MeetingKind } from '@/lib/types'
 import { checkRateLimit, LIMITS } from '@/lib/server/rateLimit'
+import { extractClientIp } from '@/lib/server/extractClientIp'
 import { isUpstreamTimeoutError, withTimeout } from '@/lib/server/withTimeout'
+import { buildChatPrompt } from '@/store/settingsSlice'
 
 export const runtime = 'nodejs'
 
@@ -12,13 +14,22 @@ function isAbortLikeError(error: unknown): boolean {
   return rec.name === 'AbortError'
 }
 
-function extractClientIp(request: Request): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
-}
-
 function isValidApiKeyFormat(value: string): boolean {
   return value.startsWith('gsk_') && value.length >= 20
 }
+
+const VALID_MEETING_KINDS: ReadonlySet<MeetingKind> = new Set([
+  'standup',
+  'sales',
+  'one_on_one',
+  'design_review',
+  'interview',
+  'brainstorm',
+  'presentation',
+  'other',
+])
+
+const MAX_HISTORY_TURNS = 20
 
 export async function POST(request: Request) {
   const startedAt = Date.now()
@@ -27,6 +38,7 @@ export async function POST(request: Request) {
     messages?: ChatMessage[]
     prompt?: string
     rollingSummary?: string
+    meetingKind?: string
     apiKey?: string
   }
 
@@ -38,7 +50,12 @@ export async function POST(request: Request) {
 
   const transcript = body.transcript?.trim() ?? ''
   const prompt = body.prompt?.trim() ?? ''
-  const rollingSummary = body.rollingSummary?.trim() || 'not available yet'
+  const rollingSummary = body.rollingSummary?.trim() ?? ''
+  const meetingKind =
+    typeof body.meetingKind === 'string' &&
+    VALID_MEETING_KINDS.has(body.meetingKind as MeetingKind)
+      ? (body.meetingKind as MeetingKind)
+      : undefined
   const apiKey = body.apiKey?.trim() ?? ''
   const messages = body.messages
   const ip = extractClientIp(request)
@@ -53,6 +70,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No messages provided' }, { status: 400 })
   }
   const cleanMessages = messages.filter((m) => !m.isFailed)
+  const trimmedMessages = cleanMessages.slice(-MAX_HISTORY_TURNS)
 
   const rate = checkRateLimit(ip, 'chat', LIMITS.chat)
   if (!rate.allowed) {
@@ -63,6 +81,7 @@ export async function POST(request: Request) {
         latencyMs: Date.now() - startedAt,
         charsIn: transcript.length,
         msgsIn: cleanMessages.length,
+        msgsKept: trimmedMessages.length,
       }),
     )
     return NextResponse.json(
@@ -72,15 +91,12 @@ export async function POST(request: Request) {
   }
 
   const groq = new Groq({ apiKey })
-  const systemContent = [
-    prompt,
-    '',
-    'MEETING_SUMMARY_SO_FAR:',
+  const systemContent = buildChatPrompt({
+    basePrompt: prompt,
     rollingSummary,
-    '',
-    'RECENT_TRANSCRIPT (timestamped):',
-    transcript || 'not available yet',
-  ].join('\n')
+    recentTranscript: transcript,
+    meetingKind,
+  })
 
   const upstream = new AbortController()
   const onAbort = () => upstream.abort()
@@ -97,7 +113,7 @@ export async function POST(request: Request) {
           max_tokens: 800,
           messages: [
             { role: 'system', content: systemContent },
-            ...cleanMessages.map((m) => ({ role: m.role, content: m.text })),
+            ...trimmedMessages.map((m) => ({ role: m.role, content: m.text })),
           ],
         },
         { signal: upstream.signal },
@@ -119,6 +135,7 @@ export async function POST(request: Request) {
           latencyMs: Date.now() - startedAt,
           charsIn: transcript.length,
           msgsIn: cleanMessages.length,
+          msgsKept: trimmedMessages.length,
         }),
       )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
@@ -137,6 +154,7 @@ export async function POST(request: Request) {
         latencyMs: Date.now() - startedAt,
         charsIn: transcript.length,
         msgsIn: cleanMessages.length,
+        msgsKept: trimmedMessages.length,
       }),
     )
     const message = err instanceof Error ? err.message : 'Chat request failed'
@@ -150,12 +168,22 @@ export async function POST(request: Request) {
       latencyMs: Date.now() - startedAt,
       charsIn: transcript.length,
       msgsIn: cleanMessages.length,
+      msgsKept: trimmedMessages.length,
     }),
   )
 
   const encoder = new TextEncoder()
   const readable = new ReadableStream({
     async start(controller) {
+      const KEEPALIVE_MS = 15_000
+      const keepaliveTimer = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keep-alive\n\n'))
+        } catch {
+          // controller is already closed
+        }
+      }, KEEPALIVE_MS)
+
       try {
         for await (const chunk of stream) {
           if (request.signal.aborted) break
@@ -175,6 +203,7 @@ export async function POST(request: Request) {
         )
         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
       } finally {
+        clearInterval(keepaliveTimer)
         request.signal.removeEventListener('abort', onAbort)
         controller.close()
       }

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildSessionExport, exportSession } from '@/lib/export'
 import { getBatchOpacity } from '@/components/suggestions/SuggestionBatch'
 import type { ChatMessage, SuggestionBatch, TranscriptLine } from '@/lib/types'
+import { SUGGEST_INTENT_PROMPTS_DEFAULT } from '@/store/settingsSlice'
 
 function sampleTranscript(): TranscriptLine[] {
   return [
@@ -15,6 +16,7 @@ function sampleBatches(): SuggestionBatch[] {
     {
       batchNumber: 1,
       timestamp: '04:53:00 PM',
+      degraded: true,
       cards: [
         { type: 'QUESTION_TO_ASK', preview: 'What is the blocker?' },
         { type: 'TALKING_POINT', preview: 'Mention migration progress.' },
@@ -38,13 +40,31 @@ function sampleChat(): ChatMessage[] {
   ]
 }
 
+function sampleExtras() {
+  return {
+    summary: '- Team discussed migration blockers.\n- Decision pending on rollout timeline.',
+    meetingKind: 'standup' as const,
+    settingsSnapshot: {
+      suggestIntentPrompts: { ...SUGGEST_INTENT_PROMPTS_DEFAULT },
+      chatPrompt: 'Custom chat prompt',
+      suggestContextChars: 3000,
+      chatContextChars: 8000,
+    },
+  }
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
 describe('buildSessionExport', () => {
   it('matches required export schema', () => {
-    const result = buildSessionExport(sampleTranscript(), sampleBatches(), sampleChat())
+    const result = buildSessionExport(
+      sampleTranscript(),
+      sampleBatches(),
+      sampleChat(),
+      sampleExtras(),
+    )
 
     expect(result.transcript).toHaveLength(2)
     expect(result.transcript[0]).toEqual({
@@ -65,13 +85,19 @@ describe('buildSessionExport', () => {
       text: 'The metric was revised last quarter.',
     })
     expect('suggestionType' in result.chat[1]).toBe(false)
+    expect(result.summary).toContain('migration blockers')
+    expect(result.meetingKind).toBe('standup')
+    expect(result.settingsSnapshot.suggestIntentPrompts).toEqual(
+      SUGGEST_INTENT_PROMPTS_DEFAULT,
+    )
+    expect(result.degradedBatchCount).toBe(1)
   })
 })
 
 describe('exportSession', () => {
   it('returns false and does nothing when all slices are empty', () => {
     const createElementSpy = vi.spyOn(document, 'createElement')
-    expect(exportSession([], [], [])).toBe(false)
+    expect(exportSession([], [], [], sampleExtras())).toBe(false)
     expect(createElementSpy).not.toHaveBeenCalled()
   })
 
@@ -98,7 +124,14 @@ describe('exportSession', () => {
       .spyOn(URL, 'revokeObjectURL')
       .mockImplementation(() => {})
 
-    expect(exportSession(sampleTranscript(), sampleBatches(), sampleChat())).toBe(true)
+    expect(
+      exportSession(
+        sampleTranscript(),
+        sampleBatches(),
+        sampleChat(),
+        sampleExtras(),
+      ),
+    ).toBe(true)
 
     expect(createElementSpy).toHaveBeenCalledWith('a')
     expect(anchor.download).toMatch(/^twinmind-session-/)
@@ -109,6 +142,42 @@ describe('exportSession', () => {
     expect(removeChildSpy).toHaveBeenCalledTimes(1)
     expect(createObjectUrlSpy).toHaveBeenCalledTimes(1)
     expect(revokeObjectUrlSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not include groqApiKey in exported JSON', async () => {
+    const originalCreateElement = document.createElement.bind(document)
+    const anchor = originalCreateElement('a')
+
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      if (tagName.toLowerCase() === 'a') return anchor
+      return originalCreateElement(tagName)
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    vi.spyOn(document.body, 'appendChild')
+    vi.spyOn(document.body, 'removeChild')
+
+    const createObjectUrlSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:mock')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+    expect(
+      exportSession(
+        sampleTranscript(),
+        sampleBatches(),
+        sampleChat(),
+        sampleExtras(),
+      ),
+    ).toBe(true)
+    expect(createObjectUrlSpy).toHaveBeenCalledTimes(1)
+
+    const [blobArg] = createObjectUrlSpy.mock.calls[0] as [Blob | MediaSource]
+    const content = await (blobArg as Blob).text()
+    expect(content).toContain('"summary"')
+    expect(content).toContain('"meetingKind"')
+    expect(content).toContain('"settingsSnapshot"')
+    expect(content).toContain('"degradedBatchCount"')
+    expect(content).not.toContain('groqApiKey')
   })
 })
 

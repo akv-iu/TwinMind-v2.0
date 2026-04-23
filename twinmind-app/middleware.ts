@@ -11,6 +11,12 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: '/api/:path*',
+  // Opt-in route list: new API routes must be added here intentionally.
+  matcher: [
+    '/api/chat/:path*',
+    '/api/suggest/:path*',
+    '/api/transcribe/:path*',
+    '/api/summarize/:path*',
+    '/api/classify-meeting/:path*',
+  ],
 }
-

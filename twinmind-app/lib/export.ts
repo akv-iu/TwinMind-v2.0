@@ -1,31 +1,22 @@
 import type {
   ChatMessage,
+  SessionExport,
+  SessionExportSettingsSnapshot,
   SuggestionBatch,
   TranscriptLine,
 } from '@/lib/types'
 
-export interface ExportTranscriptLine {
-  timestamp: string
-  text: string
-}
-
-export interface ExportChatMessage {
-  role: 'user' | 'assistant'
-  suggestionType?: ChatMessage['suggestionType']
-  text: string
-}
-
-export interface SessionExport {
-  exportedAt: string
-  transcript: ExportTranscriptLine[]
-  suggestionBatches: SuggestionBatch[]
-  chat: ExportChatMessage[]
+export interface SessionExportExtras {
+  summary: string
+  meetingKind: SessionExport['meetingKind']
+  settingsSnapshot: SessionExportSettingsSnapshot
 }
 
 export function buildSessionExport(
   transcript: TranscriptLine[],
   batches: SuggestionBatch[],
   chat: ChatMessage[],
+  extras: SessionExportExtras,
 ): SessionExport {
   return {
     exportedAt: new Date().toISOString(),
@@ -36,6 +27,15 @@ export function buildSessionExport(
         ? { role, text }
         : { role, suggestionType, text }
     )),
+    summary: extras.summary,
+    meetingKind: extras.meetingKind,
+    settingsSnapshot: {
+      suggestIntentPrompts: { ...extras.settingsSnapshot.suggestIntentPrompts },
+      chatPrompt: extras.settingsSnapshot.chatPrompt,
+      suggestContextChars: extras.settingsSnapshot.suggestContextChars,
+      chatContextChars: extras.settingsSnapshot.chatContextChars,
+    },
+    degradedBatchCount: batches.filter((batch) => batch.degraded).length,
   }
 }
 
@@ -43,12 +43,13 @@ export function exportSession(
   transcript: TranscriptLine[],
   batches: SuggestionBatch[],
   chat: ChatMessage[],
+  extras: SessionExportExtras,
 ): boolean {
   if (transcript.length === 0 && batches.length === 0 && chat.length === 0) {
     return false
   }
 
-  const payload = buildSessionExport(transcript, batches, chat)
+  const payload = buildSessionExport(transcript, batches, chat, extras)
   const json = JSON.stringify(payload, null, 2)
 
   if (typeof window === 'undefined') return true

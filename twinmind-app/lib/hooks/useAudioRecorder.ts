@@ -24,6 +24,38 @@ interface TranscribeWithRetryOptions {
   wait?: (ms: number) => Promise<void>
 }
 
+interface MicTrackCallbacks {
+  onMutedChange: (isMuted: boolean) => void
+  onEnded: () => void
+}
+
+interface MicTrackBinding {
+  detach: () => void
+}
+
+export function attachMicTrackListeners(
+  track: MediaStreamTrack,
+  callbacks: MicTrackCallbacks,
+): MicTrackBinding {
+  callbacks.onMutedChange(track.muted)
+
+  const onMute = () => callbacks.onMutedChange(true)
+  const onUnmute = () => callbacks.onMutedChange(false)
+  const onEnded = () => callbacks.onEnded()
+
+  track.addEventListener('mute', onMute)
+  track.addEventListener('unmute', onUnmute)
+  track.addEventListener('ended', onEnded)
+
+  return {
+    detach: () => {
+      track.removeEventListener('mute', onMute)
+      track.removeEventListener('unmute', onUnmute)
+      track.removeEventListener('ended', onEnded)
+    },
+  }
+}
+
 export async function transcribeWithRetry(
   form: FormData,
   options?: TranscribeWithRetryOptions,
@@ -102,6 +134,7 @@ function getMicUnavailableReason(): string | null {
 export interface UseAudioRecorderResult {
   isRecording: boolean
   isProcessing: boolean
+  isMicMuted: boolean
   hasMicPermission: boolean | null
   error: string | null
   requestMicrophoneAccess: () => Promise<boolean>
@@ -117,6 +150,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
 
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isMicMuted, setIsMicMuted] = useState(false)
   const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -127,6 +161,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   const apiKeyRef = useRef<string>(apiKey)
   const shouldRecordRef = useRef<boolean>(false)
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const micTrackBindingRef = useRef<MicTrackBinding | null>(null)
 
   useEffect(() => {
     apiKeyRef.current = apiKey
@@ -194,15 +229,25 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   }, [])
 
   const stopStreamTracks = useCallback(() => {
+    micTrackBindingRef.current?.detach()
+    micTrackBindingRef.current = null
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
   }, [])
 
   const enqueueChunkUpload = useCallback(
     (blob: Blob) => {
-      uploadQueueRef.current = uploadQueueRef.current.finally(async () => {
-        await sendChunk(blob)
-      })
+      uploadQueueRef.current = uploadQueueRef.current
+        .catch(() => {
+          // flush any stale rejection so the serial queue continues
+        })
+        .then(async () => {
+          try {
+            await sendChunk(blob)
+          } catch {
+            // sendChunk already handles failures; this is a final safety net
+          }
+        })
     },
     [sendChunk],
   )
@@ -303,13 +348,42 @@ export function useAudioRecorder(): UseAudioRecorderResult {
       shouldRecordRef.current = true
       setHasMicPermission(true)
       lastTranscriptTailRef.current = ''
+      setIsMicMuted(false)
       setIsRecording(true)
+
+      const track = stream.getAudioTracks()[0]
+      if (track) {
+        micTrackBindingRef.current?.detach()
+        micTrackBindingRef.current = attachMicTrackListeners(track, {
+          onMutedChange: (nextMuted) => setIsMicMuted(nextMuted),
+          onEnded: () => {
+            if (!shouldRecordRef.current) return
+            setError('Microphone disconnected. Restart recording.')
+            shouldRecordRef.current = false
+            clearChunkTimer()
+            const recorder = mediaRecorderRef.current
+            if (recorder && recorder.state !== 'inactive') {
+              try {
+                recorder.stop()
+              } catch {
+                stopStreamTracks()
+              }
+            } else {
+              stopStreamTracks()
+            }
+            mediaRecorderRef.current = null
+            setIsRecording(false)
+          },
+        })
+      }
+
       startRecorderCycle(stream)
     } catch (err) {
       setHasMicPermission(false)
       const message = err instanceof Error ? err.message : 'Could not access microphone.'
       setError(message)
       shouldRecordRef.current = false
+      setIsMicMuted(false)
       clearChunkTimer()
       stopStreamTracks()
     }
@@ -329,6 +403,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
       stopStreamTracks()
     }
     mediaRecorderRef.current = null
+    setIsMicMuted(false)
     setIsRecording(false)
   }, [clearChunkTimer, stopStreamTracks])
 
@@ -352,6 +427,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   return {
     isRecording,
     isProcessing,
+    isMicMuted,
     hasMicPermission,
     error,
     requestMicrophoneAccess,

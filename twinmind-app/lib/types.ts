@@ -4,6 +4,16 @@ export type CardType =
   | 'ANSWER'
   | 'FACT_CHECK'
 
+export type MeetingKind =
+  | 'standup'
+  | 'sales'
+  | 'one_on_one'
+  | 'design_review'
+  | 'interview'
+  | 'brainstorm'
+  | 'presentation'
+  | 'other'
+
 export interface SuggestIntentPrompts {
   QUESTION_TO_ASK: string
   TALKING_POINT: string
@@ -43,4 +53,33 @@ export interface SettingsState {
   chatPrompt: string
   suggestContextChars: number
   chatContextChars: number
+}
+
+export interface ExportTranscriptLine {
+  timestamp: string
+  text: string
+}
+
+export interface ExportChatMessage {
+  role: 'user' | 'assistant'
+  suggestionType?: CardType | null
+  text: string
+}
+
+export interface SessionExportSettingsSnapshot {
+  suggestIntentPrompts: SuggestIntentPrompts
+  chatPrompt: string
+  suggestContextChars: number
+  chatContextChars: number
+}
+
+export interface SessionExport {
+  exportedAt: string
+  transcript: ExportTranscriptLine[]
+  suggestionBatches: SuggestionBatch[]
+  chat: ExportChatMessage[]
+  summary: string
+  meetingKind: MeetingKind | null
+  settingsSnapshot: SessionExportSettingsSnapshot
+  degradedBatchCount: number
 }

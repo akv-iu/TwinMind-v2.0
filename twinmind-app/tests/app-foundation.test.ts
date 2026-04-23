@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useStore } from '@/store'
 import {
+  buildChatPrompt,
   CHAT_PROMPT_DEFAULT,
   SUGGEST_INTENT_PROMPTS_DEFAULT,
 } from '@/store/settingsSlice'
@@ -11,6 +12,7 @@ beforeEach(() => {
     isTranscribing: false,
     isRecording: false,
     batches: [],
+    meetingKind: null,
     chatMessages: [],
     groqApiKey: '',
     suggestIntentPrompts: { ...SUGGEST_INTENT_PROMPTS_DEFAULT },
@@ -65,5 +67,28 @@ describe('app-foundation', () => {
     const a = useStore.getState().addTranscriptLine
     const b = useStore.getState().addTranscriptLine
     expect(a).toBe(b)
+  })
+
+  it('buildChatPrompt adds empty-state guidance when transcript is missing', () => {
+    const prompt = buildChatPrompt({
+      basePrompt: CHAT_PROMPT_DEFAULT,
+      rollingSummary: '',
+      recentTranscript: '',
+    })
+    expect(prompt).toContain('CONTEXT NOTE')
+    expect(prompt).toContain('No meeting transcript is available yet.')
+    expect(prompt).toContain('MEETING_SUMMARY_SO_FAR:\nnone yet')
+    expect(prompt).toContain('RECENT_TRANSCRIPT (timestamped):\n(none yet)')
+  })
+
+  it('buildChatPrompt keeps transcript context branch unchanged when transcript exists', () => {
+    const prompt = buildChatPrompt({
+      basePrompt: CHAT_PROMPT_DEFAULT,
+      rollingSummary: '',
+      recentTranscript: '[04:52:07 PM] We should push to Friday.',
+    })
+    expect(prompt).not.toContain('CONTEXT NOTE')
+    expect(prompt).toContain('MEETING_SUMMARY_SO_FAR:\nnot available yet')
+    expect(prompt).toContain('RECENT_TRANSCRIPT (timestamped):\n[04:52:07 PM] We should push to Friday.')
   })
 })

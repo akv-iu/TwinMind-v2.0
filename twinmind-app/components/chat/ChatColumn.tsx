@@ -32,6 +32,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
   const chatMessages = useStore((s) => s.chatMessages)
   const transcriptLines = useStore((s) => s.transcriptLines)
   const rollingSummary = useStore((s) => s.summary)
+  const meetingKind = useStore((s) => s.meetingKind)
   const apiKey = useStore((s) => s.groqApiKey)
   const chatPrompt = useStore((s) => s.chatPrompt)
   const chatContextChars = useStore((s) => s.chatContextChars)
@@ -100,7 +101,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
       setError(null)
 
       const transcript = takeTailByChars(transcriptLines, chatContextChars)
-      const summaryText = rollingSummary.trim() || 'not available yet'
+      const summaryText = rollingSummary.trim()
 
       let didStreamAnyDelta = false
       let didSignalDone = false
@@ -116,6 +117,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
             rollingSummary: summaryText,
             messages: messagesForRequest,
             prompt: chatPrompt,
+            meetingKind: meetingKind ?? undefined,
             apiKey: key,
           }),
           signal: controller.signal,
@@ -226,6 +228,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
       chatPrompt,
       finaliseLastMessage,
       markLastMessageFailed,
+      meetingKind,
       rollingSummary,
       transcriptLines,
     ],

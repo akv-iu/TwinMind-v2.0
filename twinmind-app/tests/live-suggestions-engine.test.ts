@@ -12,7 +12,7 @@ const sampleCards: SuggestionCard[] = [
 ]
 
 beforeEach(() => {
-  useStore.setState({ batches: [], isRecording: false })
+  useStore.setState({ batches: [], isRecording: false, meetingKind: null })
 })
 
 describe('normalizeCards', () => {

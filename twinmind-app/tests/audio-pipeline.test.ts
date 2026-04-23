@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { deduplicateTail, lastWords } from '@/lib/dedup'
-import { transcribeWithRetry } from '@/lib/hooks/useAudioRecorder'
+import {
+  attachMicTrackListeners,
+  transcribeWithRetry,
+} from '@/lib/hooks/useAudioRecorder'
 import { useStore } from '@/store'
 
 beforeEach(() => {
@@ -131,5 +134,41 @@ describe('transcribeWithRetry', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(wait).toHaveBeenCalledTimes(1)
     expect(wait).toHaveBeenCalledWith(250)
+  })
+})
+
+describe('attachMicTrackListeners', () => {
+  it('reflects mute/unmute state and emits ended once', () => {
+    const track = new EventTarget() as EventTarget & {
+      muted: boolean
+      addEventListener: MediaStreamTrack['addEventListener']
+      removeEventListener: MediaStreamTrack['removeEventListener']
+      dispatchEvent: (event: Event) => boolean
+    }
+    track.muted = false
+
+    const mutedEvents: boolean[] = []
+    const onEnded = vi.fn()
+
+    const binding = attachMicTrackListeners(track as unknown as MediaStreamTrack, {
+      onMutedChange: (next) => mutedEvents.push(next),
+      onEnded,
+    })
+
+    track.muted = true
+    track.dispatchEvent(new Event('mute'))
+
+    track.muted = false
+    track.dispatchEvent(new Event('unmute'))
+
+    track.dispatchEvent(new Event('ended'))
+
+    expect(mutedEvents).toEqual([false, true, false])
+    expect(onEnded).toHaveBeenCalledTimes(1)
+
+    binding.detach()
+    track.muted = true
+    track.dispatchEvent(new Event('mute'))
+    expect(mutedEvents).toEqual([false, true, false])
   })
 })
