@@ -47,11 +47,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No API key provided' }, { status: 400 })
   }
   if (!isValidApiKeyFormat(apiKey)) {
-    return NextResponse.json({ error: 'invalid api key format' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid Groq key format.' }, { status: 400 })
   }
   if (!messages || !Array.isArray(messages)) {
     return NextResponse.json({ error: 'No messages provided' }, { status: 400 })
   }
+  const cleanMessages = messages.filter((m) => !m.isFailed)
 
   const rate = checkRateLimit(ip, 'chat', LIMITS.chat)
   if (!rate.allowed) {
@@ -61,11 +62,11 @@ export async function POST(request: Request) {
         status: 'rate_limited',
         latencyMs: Date.now() - startedAt,
         charsIn: transcript.length,
-        msgsIn: messages.length,
+        msgsIn: cleanMessages.length,
       }),
     )
     return NextResponse.json(
-      { error: 'rate limit' },
+      { error: 'Too many requests - wait a minute.' },
       { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
     )
   }
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
           max_tokens: 800,
           messages: [
             { role: 'system', content: systemContent },
-            ...messages.map((m) => ({ role: m.role, content: m.text })),
+            ...cleanMessages.map((m) => ({ role: m.role, content: m.text })),
           ],
         },
         { signal: upstream.signal },
@@ -117,7 +118,7 @@ export async function POST(request: Request) {
           status: 'timeout',
           latencyMs: Date.now() - startedAt,
           charsIn: transcript.length,
-          msgsIn: messages.length,
+          msgsIn: cleanMessages.length,
         }),
       )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
@@ -135,7 +136,7 @@ export async function POST(request: Request) {
         status: 'error',
         latencyMs: Date.now() - startedAt,
         charsIn: transcript.length,
-        msgsIn: messages.length,
+        msgsIn: cleanMessages.length,
       }),
     )
     const message = err instanceof Error ? err.message : 'Chat request failed'
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
       status: 'ok',
       latencyMs: Date.now() - startedAt,
       charsIn: transcript.length,
-      msgsIn: messages.length,
+      msgsIn: cleanMessages.length,
     }),
   )
 

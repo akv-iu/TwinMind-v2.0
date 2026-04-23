@@ -15,19 +15,17 @@ import { useAutoScroll } from '@/lib/hooks/useAutoScroll'
 import { takeTailByChars } from '@/lib/context'
 import { useStore } from '@/store'
 import type { CardType, ChatMessage, SuggestionCard } from '@/lib/types'
+import { normalizeApiErrorCopy } from '@/lib/clientErrorCopy'
 
 const RESPONSE_INTERRUPTED_MARKER = '\n\n\u26A0 Response interrupted.'
+const RESPONSE_INTERRUPTED_SUFFIX = '\u26A0 Response interrupted.'
 
 export interface ChatColumnHandle {
   sendCardAsMessage: (card: SuggestionCard) => void
 }
 
-function trimPendingAssistantMessage(messages: ChatMessage[]): ChatMessage[] {
-  if (messages.length === 0) return messages
-  const last = messages[messages.length - 1]
-  if (last.role !== 'assistant') return messages
-  if (last.isFinalized) return messages
-  return messages.slice(0, -1)
+function stripFailedMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter((m) => !(m.role === 'assistant' && m.isFailed))
 }
 
 export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_props, ref) {
@@ -41,6 +39,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
   const beginAssistantMessage = useStore((s) => s.beginAssistantMessage)
   const appendToLastMessage = useStore((s) => s.appendToLastMessage)
   const finaliseLastMessage = useStore((s) => s.finaliseLastMessage)
+  const markLastMessageFailed = useStore((s) => s.markLastMessageFailed)
 
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -50,30 +49,39 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
   const lastScrollRef = useRef(0)
 
   const { containerRef, onScroll, scrollToBottom } = useAutoScroll()
+  const lastMessageLength = chatMessages[chatMessages.length - 1]?.text.length ?? 0
 
   useEffect(() => {
     const now = Date.now()
-    if (now - lastScrollRef.current < 100) return
+    if (now - lastScrollRef.current < 120) return
     lastScrollRef.current = now
     scrollToBottom()
-  }, [chatMessages.length, isStreaming, scrollToBottom])
-
-  useEffect(() => {
-    if (!isStreaming) return
-    let raf = 0
-    const tick = () => {
-      scrollToBottom()
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [isStreaming, scrollToBottom])
+  }, [chatMessages.length, lastMessageLength, isStreaming, scrollToBottom])
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
     }
   }, [])
+
+  const interruptActiveStream = useCallback(() => {
+    const state = useStore.getState()
+    const last = state.chatMessages[state.chatMessages.length - 1]
+    if (last?.role === 'assistant' && !last.isFinalized) {
+      if (
+        last.text.trim().length > 0 &&
+        !last.text.trimEnd().endsWith(RESPONSE_INTERRUPTED_SUFFIX)
+      ) {
+        appendToLastMessage(RESPONSE_INTERRUPTED_MARKER)
+      }
+      markLastMessageFailed()
+    }
+    abortRef.current?.abort()
+    currentRequestIdRef.current = null
+    isStreamingRef.current = false
+    setIsStreaming(false)
+    abortRef.current = null
+  }, [appendToLastMessage, markLastMessageFailed])
 
   const fireChat = useCallback(
     async (messagesForRequest: ChatMessage[]) => {
@@ -94,8 +102,8 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
       const transcript = takeTailByChars(transcriptLines, chatContextChars)
       const summaryText = rollingSummary.trim() || 'not available yet'
 
-      beginAssistantMessage()
       let didStreamAnyDelta = false
+      let didSignalDone = false
 
       const isCurrentRequest = () => currentRequestIdRef.current === requestId
 
@@ -145,15 +153,26 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
               if (!isCurrentRequest()) return
 
               if (payload === '[DONE]') {
-                finaliseLastMessage()
+                didSignalDone = true
+                if (didStreamAnyDelta) {
+                  finaliseLastMessage()
+                } else {
+                  setError('Assistant returned empty response. Retry?')
+                }
                 continue
               }
 
               try {
                 const parsed = JSON.parse(payload) as { delta?: string }
                 if (parsed.delta) {
+                  if (!didStreamAnyDelta) {
+                    beginAssistantMessage()
+                  }
                   didStreamAnyDelta = true
                   appendToLastMessage(parsed.delta)
+                  if (parsed.delta.includes(RESPONSE_INTERRUPTED_SUFFIX)) {
+                    markLastMessageFailed()
+                  }
                 }
               } catch {
                 // ignore malformed event lines
@@ -162,25 +181,35 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
           }
         }
 
-        if (isCurrentRequest()) {
-          finaliseLastMessage()
+        if (isCurrentRequest() && !didSignalDone) {
+          if (didStreamAnyDelta) {
+            finaliseLastMessage()
+          } else {
+            setError('Assistant returned empty response. Retry?')
+          }
         }
       } catch (e) {
         if (!isCurrentRequest()) return
-        if ((e as { name?: string }).name === 'AbortError') return
 
         if (didStreamAnyDelta) {
-          appendToLastMessage(RESPONSE_INTERRUPTED_MARKER)
-          finaliseLastMessage()
+          const state = useStore.getState()
+          const last = state.chatMessages[state.chatMessages.length - 1]
+          if (
+            last?.role === 'assistant' &&
+            !last.text.trimEnd().endsWith(RESPONSE_INTERRUPTED_SUFFIX)
+          ) {
+            appendToLastMessage(RESPONSE_INTERRUPTED_MARKER)
+          }
+          markLastMessageFailed()
           return
         }
 
-        setError(e instanceof Error ? e.message : 'Chat request failed')
+        if ((e as { name?: string }).name === 'AbortError') {
+          return
+        }
 
-        const state = useStore.getState()
-        useStore.setState({
-          chatMessages: trimPendingAssistantMessage(state.chatMessages),
-        })
+        const message = e instanceof Error ? e.message : 'Chat request failed'
+        setError(normalizeApiErrorCopy(message) ?? message)
       } finally {
         if (!isCurrentRequest()) return
         currentRequestIdRef.current = null
@@ -196,6 +225,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
       chatContextChars,
       chatPrompt,
       finaliseLastMessage,
+      markLastMessageFailed,
       rollingSummary,
       transcriptLines,
     ],
@@ -208,23 +238,14 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
       if (!apiKey.trim()) return
 
       if (isStreamingRef.current) {
-        abortRef.current?.abort()
-        currentRequestIdRef.current = null
-        isStreamingRef.current = false
-        setIsStreaming(false)
-        abortRef.current = null
-
-        const state = useStore.getState()
-        useStore.setState({
-          chatMessages: trimPendingAssistantMessage(state.chatMessages),
-        })
+        interruptActiveStream()
       }
 
       addUserMessage({ suggestionType, text: trimmed })
-      const snapshot = useStore.getState().chatMessages
+      const snapshot = stripFailedMessages(useStore.getState().chatMessages)
       void fireChat(snapshot)
     },
-    [addUserMessage, apiKey, fireChat],
+    [addUserMessage, apiKey, fireChat, interruptActiveStream],
   )
 
   useImperativeHandle(
@@ -238,7 +259,14 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
   )
 
   const handleRetryLast = useCallback(() => {
+    if (isStreamingRef.current) {
+      interruptActiveStream()
+    }
+
     const messages = useStore.getState().chatMessages
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== 'assistant' || !last.isFailed) return
+
     let lastUserIndex = -1
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (messages[i].role === 'user') {
@@ -251,8 +279,8 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
     const retryMessages = messages.slice(0, lastUserIndex + 1)
     useStore.setState({ chatMessages: retryMessages })
     setError(null)
-    void fireChat(retryMessages)
-  }, [fireChat])
+    void fireChat(stripFailedMessages(retryMessages))
+  }, [fireChat, interruptActiveStream])
 
   function handleManualSend(text: string) {
     sendUserText(text, null)

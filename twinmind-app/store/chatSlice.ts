@@ -8,6 +8,7 @@ export interface ChatSlice {
   beginAssistantMessage: () => void
   appendToLastMessage: (delta: string) => void
   finaliseLastMessage: () => void
+  markLastMessageFailed: () => void
   clearChat: () => void
 }
 
@@ -37,6 +38,15 @@ export const createChatSlice: StateCreator<AllSlices, [], [], ChatSlice> = (set)
       const next = s.chatMessages.slice()
       const last = next[next.length - 1]
       next[next.length - 1] = { ...last, isFinalized: true }
+      return { chatMessages: next }
+    }),
+  markLastMessageFailed: () =>
+    set((s) => {
+      if (s.chatMessages.length === 0) return s
+      const next = s.chatMessages.slice()
+      const last = next[next.length - 1]
+      if (last.role !== 'assistant') return s
+      next[next.length - 1] = { ...last, isFailed: true, isFinalized: true }
       return { chatMessages: next }
     }),
   clearChat: () => set({ chatMessages: [] }),

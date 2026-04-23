@@ -111,6 +111,34 @@ export interface SettingsSlice {
   resetPromptsToDefault: () => void
 }
 
+export type PersistedSettingsState = Pick<
+  SettingsSlice,
+  | 'groqApiKey'
+  | 'suggestIntentPrompts'
+  | 'chatPrompt'
+  | 'suggestContextChars'
+  | 'chatContextChars'
+>
+
+export function partializeSettingsState(
+  state: Pick<
+    AllSlices,
+    | 'groqApiKey'
+    | 'suggestIntentPrompts'
+    | 'chatPrompt'
+    | 'suggestContextChars'
+    | 'chatContextChars'
+  >,
+): PersistedSettingsState {
+  return {
+    groqApiKey: state.groqApiKey,
+    suggestIntentPrompts: cloneSuggestIntentPrompts(state.suggestIntentPrompts),
+    chatPrompt: state.chatPrompt,
+    suggestContextChars: state.suggestContextChars,
+    chatContextChars: state.chatContextChars,
+  }
+}
+
 export const createSettingsSlice: StateCreator<AllSlices, [], [], SettingsSlice> = (set) => ({
   groqApiKey: '',
   suggestIntentPrompts: cloneSuggestIntentPrompts(SUGGEST_INTENT_PROMPTS_DEFAULT),

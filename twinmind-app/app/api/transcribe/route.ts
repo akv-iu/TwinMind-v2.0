@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   }
   const apiKeyTrimmed = apiKey.trim()
   if (!isValidApiKeyFormat(apiKeyTrimmed)) {
-    return NextResponse.json({ error: 'invalid api key format' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid Groq key format.' }, { status: 400 })
   }
   if (!audio) {
     return NextResponse.json({ error: 'No audio provided' }, { status: 400 })
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
       }),
     )
     return NextResponse.json(
-      { error: 'rate limit' },
+      { error: 'Too many requests - wait a minute.' },
       { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
     )
   }

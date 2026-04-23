@@ -26,6 +26,7 @@ export interface SuggestionBatch {
   batchNumber: number
   timestamp: string
   cards: SuggestionCard[]
+  degraded?: boolean
 }
 
 export interface ChatMessage {
@@ -33,6 +34,7 @@ export interface ChatMessage {
   suggestionType?: CardType | null
   text: string
   isFinalized?: boolean
+  isFailed?: boolean
 }
 
 export interface SettingsState {

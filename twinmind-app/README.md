@@ -1,104 +1,56 @@
-# TwinMind v2 - Live Suggestions Assignment
+# TwinMind v2
 
-Single-page meeting copilot built with Next.js + TypeScript.
+## What this is
+TwinMind v2 is a live meeting copilot with a fixed 3-column UI: mic/transcript, live suggestions, and detailed chat. It runs session-only in the browser, uses Groq only for inference, and starts working after the user pastes their Groq key in Settings.
 
-## Status
-
-- Step 1 to Step 5 implemented and verified
-- Tests passing, TypeScript clean, production build passing
-- Deployment URL: TODO
-
-## Core Features
-
-- 3-column layout:
-  - `1. MIC & TRANSCRIPT`
-  - `2. LIVE SUGGESTIONS`
-  - `3. CHAT (DETAILED ANSWERS)`
-- Microphone recording with chunked transcription via Groq Whisper
-- Live suggestion batches every 30 seconds (manual reload supported)
-- Click-through chat with streamed assistant responses via SSE
-- Session export as JSON
-- In-memory session only (no persistence)
-
-## Tech Stack
-
-- Frontend: Next.js App Router, React 19, TypeScript
-- State: Zustand (slice-based)
-- Styling: Tailwind CSS v4 (dark-mode class variant)
-- AI provider: Groq only
-  - Transcription: `whisper-large-v3`
-  - Suggestions: `gpt-OSS-120B`
-  - Chat: `gpt-OSS-120B`
-- Tests: Vitest + jsdom
-
-## Setup
-
-1. Install dependencies:
-
+## Quick start
 ```bash
-npm install
+pnpm install
+pnpm dev
 ```
 
-2. Start dev server:
-
+If you use npm:
 ```bash
+npm install
 npm run dev
 ```
 
-3. Open `http://localhost:3000`
+Then open `http://localhost:3000`, open Settings, and paste your Groq API key.
 
-4. Open Settings and paste your Groq API key.
+## Stack
+- Next.js App Router with Node runtime API routes
+- React + TypeScript + Tailwind CSS
+- Zustand slices with `persist` for settings only (`sessionStorage`)
+- Groq SDK models: `whisper-large-v3` for transcription and `openai/gpt-oss-120b` for suggestions, chat, and rolling summaries
 
-Note: the app intentionally stays non-functional until a key is provided.
+## Prompt strategy
+- Suggestion batches produce exactly 3 cards when substantive context exists, with 4 possible types: `QUESTION_TO_ASK`, `TALKING_POINT`, `ANSWER`, `FACT_CHECK`
+- Prior-batch memory is passed each suggestion cycle to reduce duplicate previews.
+- Rolling summary is refreshed roughly every 5 batches to keep long meetings coherent.
+- No-op escape is supported: model can return `{"cards":[]}` during silence/filler.
+- Suggest endpoint enforces strict JSON schema (`json_schema`) with fallback to `json_object` if schema validation fails upstream.
+- Chat prompt is transcript-grounded, asks for explicit general-knowledge tagging, and includes prompt-injection guardrails.
 
-## Commands
+## Audio pipeline
+- Recorder runs 6-second record-stop-restart cycles.
+- Chunks are uploaded in a serial queue (single in-flight by design).
+- Retries/backoff on 5xx/429/network: `250ms -> 1s -> 3s`.
+- Known limitation: small boundary loss can happen at cycle transitions (acceptable tradeoff for assignment scope).
 
-```bash
-npm run test
-npx tsc --noEmit
-npm run build
-```
+## API hardening
+- Origin allow-list via `ALLOWED_ORIGINS`.
+- In-memory per-IP token buckets: suggest `10/min`, chat `30/min`, transcribe `60/min`, summarize `5/min`
+- Upstream timeouts: suggest `12s`, chat `12s`, transcribe `25s`, summarize `15s`
+- Server logs are metric-only; transcript/prompt/key payloads are not logged.
 
-## Architecture
+## Tradeoffs taken
+- In-memory rate limits are per-instance deterrents, not distributed enforcement.
+- No dual-recorder crossfade pipeline; simpler implementation with minor chunk-boundary loss.
+- Chat context uses transcript tail + rolling summary, not full retrieval indexing.
+- Groq key is in `sessionStorage`: survives reload in same tab, cleared on tab close.
 
-- `app/api/transcribe/route.ts`: multipart transcription proxy
-- `app/api/suggest/route.ts`: live suggestion generation + normalization to 3 cards
-- `app/api/chat/route.ts`: streamed SSE responses for chat
-- `store/*Slice.ts`: isolated state slices for transcript, suggestions, chat, settings
-- `components/*`: per-column UI and shared layout primitives
-- `lib/export.ts`: session export shaping and download
-- `lib/hooks/useAudioRecorder.ts`: audio capture and overlap strategy
+## Deploy notes (Vercel)
+- Set `ALLOWED_ORIGINS` in Vercel for Production and Preview.
+- Value format example: `https://your-app.vercel.app` (or comma-separated with preview domains).
 
-## Prompt Strategy
-
-- Suggest prompt is constrained to typed, actionable outputs and JSON formatting.
-- Suggestion context uses a sliding character window (`suggestContextChars`) from recent transcript text.
-- Chat prompt is separate and uses a larger transcript window (`chatContextChars`) plus conversation history.
-- Both prompt strings and context windows are editable from Settings with tuned defaults.
-
-## Tradeoffs
-
-- Character-based context windows are simple and fast but less token-precise.
-- In-memory state avoids persistence complexity and matches assignment constraints.
-- Suggestion normalization pads/trims to guarantee exactly 3 cards, trading strictness for resilience.
-- API key is stored in client state for this session only; no backend key storage.
-
-## Reference App Notes
-
-Capture your own notes after using the real TwinMind app:
-- Timing feel compared to this build
-- Suggestion quality and type balance
-- Chat response style and latency expectations
-
-## Deployment Checklist
-
-- Deploy to Vercel or Netlify
-- Confirm public URL works
-- Confirm only Groq key paste is required
-- Add deployed URL in this README
-
-## Safety / Constraints
-
-- No OpenAI SDK usage
-- No hardcoded API keys
-- Groq imports are limited to `app/api/*` routes
+No backend secret key is needed for model calls because users provide their own Groq key in Settings.

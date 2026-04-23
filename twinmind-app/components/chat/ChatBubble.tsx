@@ -5,8 +5,6 @@ import { Loader2 } from 'lucide-react'
 import { formatCardType } from '@/components/suggestions/SuggestionCard'
 import type { ChatMessage } from '@/lib/types'
 
-const RESPONSE_INTERRUPTED_MARKER = '\u26A0 Response interrupted.'
-
 export interface ChatBubbleProps {
   message: ChatMessage
   isStreaming?: boolean
@@ -73,7 +71,7 @@ export function ChatBubble({ message, isStreaming, onRetryLast }: ChatBubbleProp
     !isUser &&
     Boolean(onRetryLast) &&
     message.isFinalized === true &&
-    message.text.trimEnd().endsWith(RESPONSE_INTERRUPTED_MARKER)
+    message.isFailed === true
 
   return (
     <div className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
@@ -86,6 +84,7 @@ export function ChatBubble({ message, isStreaming, onRetryLast }: ChatBubbleProp
           isUser
             ? 'bg-zinc-800 text-zinc-100'
             : 'bg-zinc-900 text-zinc-100 ring-1 ring-zinc-800',
+          message.isFailed ? 'opacity-70 ring-amber-500/30' : '',
         ].join(' ')}
       >
         {showSpinner ? (

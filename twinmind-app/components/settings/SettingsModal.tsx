@@ -56,6 +56,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     chatContextChars,
   })
 
+  const hasChanges =
+    draft.groqApiKey !== groqApiKey ||
+    draft.chatPrompt !== chatPrompt ||
+    draft.suggestContextChars !== suggestContextChars ||
+    draft.chatContextChars !== chatContextChars ||
+    JSON.stringify(draft.suggestIntentPrompts) !==
+      JSON.stringify(suggestIntentPrompts)
+
   useEffect(() => {
     if (!open) return
     setDraft({
@@ -140,16 +148,25 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
       <button
         aria-label="Close settings"
-        onClick={handleSave}
+        onClick={onClose}
         className="flex-1 bg-black/60"
       />
       <aside className="flex h-full w-96 max-w-full flex-col border-l border-zinc-800 bg-zinc-950">
         <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-300">
-            Settings
+          <h2 className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-widest text-zinc-300">
+            <span>Settings</span>
+            {hasChanges ? (
+              <span
+                aria-label="Unsaved changes"
+                title="Unsaved changes"
+                className="text-zinc-500"
+              >
+                •
+              </span>
+            ) : null}
           </h2>
           <button
-            onClick={handleSave}
+            onClick={onClose}
             className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600"
           >
             <X size={16} />
@@ -242,7 +259,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             Reset prompts to defaults
           </button>
           <p className="text-xs text-zinc-500">
-            Changes are saved when you press Save, close with X, or click outside.
+            Unsaved changes are discarded on Cancel, X, or click outside. Press Save to apply.
           </p>
         </div>
 

@@ -81,8 +81,12 @@ function shouldFallbackToJsonObject(error: unknown): boolean {
 
   return (
     codes.includes('json_validate_failed') ||
+    codes.includes('failed_generation') ||
     codes.includes('invalid_request_error') ||
     message.includes('failed to validate json') ||
+    message.includes('failed to generate json') ||
+    message.includes('failed generation') ||
+    message.includes('failed_generation') ||
     message.includes('json_validate_failed') ||
     message.includes('json_schema') ||
     message.includes('response_format') ||
@@ -127,6 +131,13 @@ export function normalizeCards(input: unknown): SuggestionCard[] {
     normalized.push({ type: typed, preview: trimmedPreview })
   }
 
+  if (normalized.length === 3) {
+    const uniqueTypes = new Set(normalized.map((card) => card.type))
+    if (uniqueTypes.size === 1) {
+      return [normalized[0]]
+    }
+  }
+
   return normalized
 }
 
@@ -167,16 +178,27 @@ async function createSuggestCompletion(
       throw err
     }
 
-    const completion = await groq.chat.completions.create(
-      {
-        ...baseRequest,
-        response_format: { type: 'json_object' },
-      },
-    )
+    try {
+      const completion = await groq.chat.completions.create(
+        {
+          ...baseRequest,
+          response_format: { type: 'json_object' },
+        },
+      )
 
-    return {
-      content: completion.choices[0]?.message?.content ?? '{}',
-      degraded: true,
+      return {
+        content: completion.choices[0]?.message?.content ?? '{}',
+        degraded: true,
+      }
+    } catch (fallbackErr) {
+      if (!shouldFallbackToJsonObject(fallbackErr)) {
+        throw fallbackErr
+      }
+      return {
+        // Keep the pipeline alive on repeated JSON-validation failures.
+        content: '{"cards":[]}',
+        degraded: true,
+      }
     }
   }
 }
@@ -199,7 +221,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No API key provided' }, { status: 400 })
   }
   if (!isValidApiKeyFormat(apiKey)) {
-    return NextResponse.json({ error: 'invalid api key format' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid Groq key format.' }, { status: 400 })
   }
   if (!transcript) {
     return NextResponse.json({ error: 'No transcript provided' }, { status: 400 })
@@ -217,7 +239,7 @@ export async function POST(request: Request) {
       }),
     )
     return NextResponse.json(
-      { error: 'rate limit' },
+      { error: 'Too many requests - wait a minute.' },
       { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
     )
   }
@@ -264,7 +286,11 @@ export async function POST(request: Request) {
       }
 
       cards = normalizeCards(parsed)
-      if (cards.length > 0 || attempt === 1) break
+      if (cards.length >= 2 || attempt === 1) break
+    }
+
+    if (cards.length < 3) {
+      degraded = true
     }
 
     console.log(
@@ -290,6 +316,18 @@ export async function POST(request: Request) {
         }),
       )
       return NextResponse.json({ error: 'upstream timeout' }, { status: 504 })
+    }
+    if (shouldFallbackToJsonObject(err)) {
+      console.log(
+        JSON.stringify({
+          route: 'suggest',
+          status: 'json_degraded_empty',
+          latencyMs: Date.now() - startedAt,
+          charsIn: transcript.length,
+          cardsOut: 0,
+        }),
+      )
+      return NextResponse.json({ cards: [], degraded: true })
     }
 
     console.log(

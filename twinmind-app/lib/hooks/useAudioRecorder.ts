@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '@/store'
 import { deduplicateTail, lastWords } from '@/lib/dedup'
+import {
+  normalizeApiErrorCopy,
+  TRANSCRIBE_FAILURE_COPY,
+} from '@/lib/clientErrorCopy'
 
 const CHUNK_MS = 6_000
 const TAIL_WORD_COUNT = 10
@@ -120,7 +124,6 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   const streamRef = useRef<MediaStream | null>(null)
   const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastTranscriptTailRef = useRef<string>('')
-  const inFlightCountRef = useRef<number>(0)
   const apiKeyRef = useRef<string>(apiKey)
   const shouldRecordRef = useRef<boolean>(false)
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve())
@@ -144,22 +147,22 @@ export function useAudioRecorder(): UseAudioRecorderResult {
 
   const sendChunk = useCallback(
     async (assembled: Blob) => {
-      const key = apiKeyRef.current.trim()
-      if (!key) {
-        setError('Add your Groq API key in Settings to start.')
-        return
-      }
-      const file = new File([assembled], 'chunk.webm', {
-        type: assembled.type || 'audio/webm',
-      })
-      const form = new FormData()
-      form.append('audio', file)
-      form.append('apiKey', key)
-
-      inFlightCountRef.current += 1
       setIsProcessing(true)
       setTranscribing(true)
       try {
+        const key = apiKeyRef.current.trim()
+        if (!key) {
+          setError('Add your Groq API key in Settings to start.')
+          return
+        }
+
+        const file = new File([assembled], 'chunk.webm', {
+          type: assembled.type || 'audio/webm',
+        })
+        const form = new FormData()
+        form.append('audio', file)
+        form.append('apiKey', key)
+
         const text = await transcribeWithRetry(form)
         const cleaned = deduplicateTail(lastTranscriptTailRef.current, text ?? '')
         if (cleaned.trim()) {
@@ -167,20 +170,17 @@ export function useAudioRecorder(): UseAudioRecorderResult {
           lastTranscriptTailRef.current = lastWords(cleaned, TAIL_WORD_COUNT)
         }
       } catch (err) {
-        const message =
+        const fallbackMessage =
           err instanceof RetryExhaustedTranscriptionError
-            ? 'Transcription failed after retries'
+            ? TRANSCRIBE_FAILURE_COPY
             : err instanceof Error
               ? err.message
               : 'Transcription failed'
-        setError(message)
+        const normalized = normalizeApiErrorCopy(fallbackMessage)
+        setError(normalized ?? fallbackMessage)
       } finally {
-        inFlightCountRef.current -= 1
-        if (inFlightCountRef.current <= 0) {
-          inFlightCountRef.current = 0
-          setIsProcessing(false)
-          setTranscribing(false)
-        }
+        setIsProcessing(false)
+        setTranscribing(false)
       }
     },
     [addTranscriptLine, setTranscribing],

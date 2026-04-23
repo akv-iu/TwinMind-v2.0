@@ -52,21 +52,27 @@ describe('normalizeCards', () => {
     expect(result[0].type).toBe('QUESTION_TO_ASK')
   })
 
-  it('preserves repeated types when model returns duplicates', () => {
+  it('reduces three-of-same-type outputs to one card', () => {
     const duplicateHeavy = [
       { type: 'QUESTION_TO_ASK', preview: 'What is the release date for launch?' },
       { type: 'QUESTION_TO_ASK', preview: 'Who owns the migration sign-off now?' },
       { type: 'QUESTION_TO_ASK', preview: 'Which blocker is highest risk today?' },
     ]
     const result = normalizeCards(duplicateHeavy)
-    expect(result).toHaveLength(3)
-    expect(result.map((c) => c.type)).toEqual([
-      'QUESTION_TO_ASK',
-      'QUESTION_TO_ASK',
-      'QUESTION_TO_ASK',
-    ])
+    expect(result).toHaveLength(1)
+    expect(result[0].type).toBe('QUESTION_TO_ASK')
   })
 
+  it('keeps three cards when at least two types are present', () => {
+    const varied = [
+      { type: 'ANSWER', preview: 'The dependency update is done and merged to main branch.' },
+      { type: 'ANSWER', preview: 'The rollout starts tomorrow after staging validation passes.' },
+      { type: 'FACT_CHECK', preview: 'Confirm the claimed 40% cost drop against finance export.' },
+    ]
+    const result = normalizeCards(varied)
+    expect(result).toHaveLength(3)
+    expect(new Set(result.map((card) => card.type)).size).toBe(2)
+  })
 })
 
 describe('addBatch', () => {
@@ -77,6 +83,16 @@ describe('addBatch', () => {
     expect(batches[0].timestamp).toBe('04:53:00 PM')
     expect(batches[0].batchNumber).toBe(2)
     expect(batches[1].batchNumber).toBe(1)
+  })
+
+  it('stores degraded metadata when provided', () => {
+    useStore.getState().addBatch({
+      timestamp: '05:00:00 PM',
+      cards: sampleCards,
+      degraded: true,
+    })
+    const batches = useStore.getState().batches
+    expect(batches[0].degraded).toBe(true)
   })
 })
 

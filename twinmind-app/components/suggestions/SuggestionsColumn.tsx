@@ -10,6 +10,12 @@ import type { SuggestionCard, TranscriptLine } from '@/lib/types'
 import { takeTailByChars } from '@/lib/context'
 import { refreshSummary, shouldRefreshSummary } from '@/lib/summary'
 import { buildSuggestPrompt } from '@/store/settingsSlice'
+import {
+  INVALID_GROQ_KEY_COPY,
+  RATE_LIMITED_COPY,
+  SUGGEST_FAILURE_COPY,
+  normalizeApiErrorCopy,
+} from '@/lib/clientErrorCopy'
 
 const COUNTDOWN_SECONDS = 30
 
@@ -51,8 +57,13 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [waitingForSubstance, setWaitingForSubstance] = useState(false)
+  const [showDegradedHint, setShowDegradedHint] = useState(false)
 
   const isLoadingRef = useRef(false)
+  const abortRef = useRef<AbortController | null>(null)
+  const deadlineRef = useRef<number>(Date.now() + COUNTDOWN_SECONDS * 1000)
+  const lastFireHashRef = useRef<string>('')
+  const fireSuggestionsRef = useRef<() => Promise<void>>(async () => {})
   const isSummaryRefreshingRef = useRef(false)
   const lastSummaryTranscriptCharsRef = useRef(0)
   const lastSummaryBatchCountRef = useRef(0)
@@ -70,6 +81,16 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
 
     const recentTranscript = takeTailByChars(transcriptLines, suggestContextChars)
     if (!recentTranscript.trim()) return
+    const hashInput = `${recentTranscript.length}:${recentTranscript.slice(-64)}`
+    if (hashInput === lastFireHashRef.current) {
+      deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
+      setCountdown(COUNTDOWN_SECONDS)
+      return
+    }
+
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
 
     const priorBatches = getRecentBatches(2)
       .flatMap((batch) => batch.cards.map((card) => `${formatCardType(card.type)}: ${card.preview}`))
@@ -96,6 +117,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Unknown error' }))
@@ -104,13 +126,17 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
 
       const data = (await res.json()) as SuggestResponse
       const cards = Array.isArray(data.cards) ? data.cards : []
+      if (controller.signal.aborted) return
+      lastFireHashRef.current = hashInput
 
       if (cards.length === 0) {
+        setShowDegradedHint(data.degraded === true)
         setWaitingForSubstance(true)
         return
       }
 
-      addBatch({ timestamp: timestampNow(), cards })
+      addBatch({ timestamp: timestampNow(), cards, degraded: data.degraded === true })
+      setShowDegradedHint(false)
       setWaitingForSubstance(false)
 
       const nextBatchCount = useStore.getState().batches.length
@@ -142,11 +168,23 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
         .finally(() => {
           isSummaryRefreshingRef.current = false
         })
-    } catch {
-      setError('Failed to load suggestions. Retrying in 30s.')
+    } catch (err) {
+      if ((err as { name?: string }).name === 'AbortError') return
+      const message = err instanceof Error ? err.message : ''
+      const normalized = normalizeApiErrorCopy(message)
+      if (normalized === RATE_LIMITED_COPY || normalized === INVALID_GROQ_KEY_COPY) {
+        setError(normalized)
+      } else {
+        setError(SUGGEST_FAILURE_COPY)
+      }
     } finally {
+      deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
+      setCountdown(COUNTDOWN_SECONDS)
       isLoadingRef.current = false
       setIsLoading(false)
+      if (abortRef.current === controller) {
+        abortRef.current = null
+      }
     }
   }, [
     addBatch,
@@ -160,23 +198,45 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   ])
 
   useEffect(() => {
+    fireSuggestionsRef.current = fireSuggestions
+  }, [fireSuggestions])
+
+  useEffect(() => {
     if (!isRecording) return
+    deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
+    setCountdown(COUNTDOWN_SECONDS)
+
     const id = setInterval(() => {
-      if (isLoadingRef.current) return
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          void fireSuggestions()
-          return COUNTDOWN_SECONDS
-        }
-        return prev - 1
-      })
-    }, 1000)
+      const remaining = Math.max(
+        0,
+        Math.ceil((deadlineRef.current - Date.now()) / 1000),
+      )
+      setCountdown(remaining)
+      if (remaining === 0 && !isLoadingRef.current) {
+        void fireSuggestionsRef.current()
+      }
+    }, 250)
     return () => clearInterval(id)
-  }, [fireSuggestions, isRecording])
+  }, [isRecording])
+
+  useEffect(() => {
+    if (!isRecording) {
+      abortRef.current?.abort()
+    }
+  }, [isRecording])
+
+  useEffect(
+    () => () => {
+      abortRef.current?.abort()
+    },
+    [],
+  )
 
   function handleReload() {
     if (isLoading || !apiKey.trim()) return
+    deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
     setCountdown(COUNTDOWN_SECONDS)
+    lastFireHashRef.current = ''
     void fireSuggestions()
   }
 
@@ -207,13 +267,22 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
           Reload suggestions
         </button>
         <span className="text-xs text-zinc-500">
-          {isRecording ? `auto-refresh in ${countdown}s` : 'auto-refresh paused (mic off)'}
+          {!isRecording
+            ? 'auto-refresh paused (mic off)'
+            : isLoading
+              ? 'generating suggestions...'
+              : `auto-refresh in ${countdown}s`}
         </span>
       </div>
 
       {waitingForSubstance && !noKey && (
         <div className="border-b border-zinc-900 px-4 py-2 text-xs text-zinc-500">
           waiting for substance...
+        </div>
+      )}
+      {showDegradedHint && !noKey && (
+        <div className="border-b border-amber-500/20 px-4 py-2 text-xs text-amber-300/90">
+          model json fallback active...
         </div>
       )}
 
