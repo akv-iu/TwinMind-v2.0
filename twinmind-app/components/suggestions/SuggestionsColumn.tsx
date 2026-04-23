@@ -44,6 +44,7 @@ function countTranscriptChars(lines: TranscriptLine[]): number {
 interface SuggestResponse {
   cards: SuggestionCard[]
   degraded?: boolean
+  repaired?: boolean
 }
 
 export interface SuggestionsColumnProps {
@@ -70,6 +71,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const [error, setError] = useState<string | null>(null)
   const [waitingForSubstance, setWaitingForSubstance] = useState(false)
   const [showDegradedHint, setShowDegradedHint] = useState(false)
+  const [showRepairedHint, setShowRepairedHint] = useState(false)
 
   const isLoadingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -143,16 +145,23 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       const data = (await res.json()) as SuggestResponse
       const cards = Array.isArray(data.cards) ? data.cards : []
       if (controller.signal.aborted) return
-      lastFireHashRef.current = hashInput
 
       if (cards.length === 0) {
         setShowDegradedHint(data.degraded === true)
+        setShowRepairedHint(false)
         setWaitingForSubstance(true)
         return
       }
 
-      addBatch({ timestamp: timestampNow(), cards, degraded: data.degraded === true })
-      setShowDegradedHint(false)
+      lastFireHashRef.current = hashInput
+      addBatch({
+        timestamp: timestampNow(),
+        cards,
+        degraded: data.degraded === true,
+        repaired: data.repaired === true,
+      })
+      setShowDegradedHint(data.degraded === true)
+      setShowRepairedHint(data.repaired === true)
       setWaitingForSubstance(false)
 
       const nextBatchCount = useStore.getState().batches.length
@@ -333,6 +342,11 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       {showDegradedHint && !noKey && (
         <div className="border-b border-amber-500/20 px-4 py-2 text-xs text-amber-300/90">
           model json fallback active...
+        </div>
+      )}
+      {showRepairedHint && !noKey && (
+        <div className="border-b border-cyan-500/20 px-4 py-2 text-xs text-cyan-300/90">
+          format repair applied...
         </div>
       )}
 

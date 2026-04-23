@@ -21,9 +21,25 @@ const configuredSuggestMaxTokens = Number(
 const SUGGEST_MAX_TOKENS = Number.isFinite(configuredSuggestMaxTokens)
   ? Math.min(Math.max(Math.floor(configuredSuggestMaxTokens), 240), 900)
   : DEFAULT_SUGGEST_MAX_TOKENS
+const REPAIR_MAX_TOKENS = 220
+const REPAIR_TRANSCRIPT_CHARS = 1200
+const REPAIR_MODEL_OUTPUT_CHARS = 2200
+const FORCE_NONEMPTY_MAX_TOKENS = 240
 
 const RETRY_NUDGE_PROMPT =
   'Your previous response was not valid enough. Return ONLY a JSON object with key "cards". Each card must have: type (QUESTION_TO_ASK|TALKING_POINT|ANSWER|FACT_CHECK) and preview (10-180 chars). Produce exactly 3 cards unless there is no substance, then return {"cards":[]}.'
+const REPAIR_SYSTEM_PROMPT = [
+  'ROLE',
+  'You repair malformed suggestion output into a valid suggestion cards object.',
+  '',
+  'OUTPUT',
+  'Return ONLY JSON object with key "cards".',
+  'Each card has: type and preview.',
+  'Valid type values: QUESTION_TO_ASK, TALKING_POINT, ANSWER, FACT_CHECK.',
+  'Preview length: 10-180 characters.',
+  'Prefer exactly 3 cards. Use at least 2 distinct types if possible.',
+  'If content is empty/off-topic, return {"cards":[]}.',
+].join('\n')
 
 function stripJsonFences(raw: string): string {
   const trimmed = raw.trim()
@@ -39,6 +55,33 @@ function extractFirstJsonObject(raw: string): string {
   const end = raw.lastIndexOf('}')
   if (end === -1 || end < start) return raw
   return raw.slice(start, end + 1)
+}
+
+function takeTail(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  return text.slice(text.length - maxChars)
+}
+
+function hasSubstantiveTranscript(transcript: string): boolean {
+  const cleaned = transcript
+    .replace(/\b\d{1,2}:\d{2}:\d{2}\s*(AM|PM)?\b/gi, ' ')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!cleaned) return false
+  const words = cleaned.split(' ').filter(Boolean)
+  return words.length >= 18
+}
+
+function isJsonLikePreview(value: string): boolean {
+  const preview = value.trim()
+  if (!preview) return false
+  if (preview.startsWith('{') || preview.startsWith('[')) return true
+  if (preview.startsWith('\\"{') || preview.startsWith('\\"[')) return true
+  if (preview.includes('\\"cards\\"')) return true
+  if (/"cards"\s*:/.test(preview)) return true
+  if (/"type"\s*:/.test(preview) && /"preview"\s*:/.test(preview)) return true
+  return false
 }
 
 function fitPreview(value: string): string {
@@ -71,8 +114,10 @@ function parseCardsFromPlainText(raw: string): SuggestionCard[] {
       type = match[1].toUpperCase() as CardType
       preview = fitPreview(match[2] ?? '')
       if (!VALID_TYPES.has(type)) continue
+      if (isJsonLikePreview(preview)) continue
     } else {
       preview = fitPreview(cleaned)
+      if (isJsonLikePreview(preview)) continue
       const lower = cleaned.toLowerCase()
       if (cleaned.endsWith('?')) type = 'QUESTION_TO_ASK'
       else if (
@@ -220,6 +265,7 @@ export function normalizeCards(input: unknown): SuggestionCard[] {
 
     const trimmedPreview = preview.trim()
     if (trimmedPreview.length < 10 || trimmedPreview.length > 180) continue
+    if (isJsonLikePreview(trimmedPreview)) continue
     normalized.push({ type: typed, preview: trimmedPreview })
   }
 
@@ -234,13 +280,14 @@ interface CompletionResult {
 async function createSuggestCompletion(
   groq: Groq,
   messages: Array<{ role: 'system' | 'user'; content: string }>,
+  options?: { maxTokens?: number; temperature?: number; topP?: number },
 ): Promise<CompletionResult> {
   const baseRequest = {
     model: 'openai/gpt-oss-120b',
     messages,
-    temperature: 0.4,
-    top_p: 0.9,
-    max_tokens: SUGGEST_MAX_TOKENS,
+    temperature: options?.temperature ?? 0.4,
+    top_p: options?.topP ?? 0.9,
+    max_tokens: options?.maxTokens ?? SUGGEST_MAX_TOKENS,
   }
 
   try {
@@ -311,32 +358,101 @@ export async function POST(request: Request) {
     const groq = new Groq({ apiKey })
     let cards: SuggestionCard[] = []
     let usedJsonFallback = false
-    let attemptsUsed = 0
+    let repairUsed = false
+    let attemptsUsed = 1
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      attemptsUsed = attempt + 1
-      const messages: Array<{ role: 'system' | 'user'; content: string }> = [
-        { role: 'system', content: prompt },
+    const primaryMessages: Array<{ role: 'system' | 'user'; content: string }> = [
+      { role: 'system', content: prompt },
+      {
+        role: 'user',
+        content:
+          'Generate the suggestion batch now. Return ONLY a JSON object with key "cards". Each card must include type and preview. No markdown and no extra keys.',
+      },
+    ]
+    const primaryCompletion = await withTimeout(
+      createSuggestCompletion(groq, primaryMessages),
+      12_000,
+      'suggest',
+    )
+    usedJsonFallback = usedJsonFallback || primaryCompletion.usedJsonFallback
+    cards = coerceCardsFromModelContent(primaryCompletion.content)
+
+    if (cards.length < 3) {
+      attemptsUsed = 2
+      const repairMessages: Array<{ role: 'system' | 'user'; content: string }> = [
+        { role: 'system', content: REPAIR_SYSTEM_PROMPT },
         {
           role: 'user',
-          content:
-            'Generate the suggestion batch now. Return ONLY a JSON object with key "cards". Each card must include type and preview. No markdown and no extra keys.',
+          content: [
+            'RECENT_TRANSCRIPT_TAIL:',
+            takeTail(transcript, REPAIR_TRANSCRIPT_CHARS),
+            '',
+            'MALFORMED_MODEL_OUTPUT:',
+            takeTail(primaryCompletion.content, REPAIR_MODEL_OUTPUT_CHARS),
+            '',
+            RETRY_NUDGE_PROMPT,
+          ].join('\n'),
         },
       ]
-      if (attempt === 1) {
-        messages.push({ role: 'system', content: RETRY_NUDGE_PROMPT })
+
+      try {
+        const repairCompletion = await withTimeout(
+          createSuggestCompletion(groq, repairMessages, {
+            maxTokens: REPAIR_MAX_TOKENS,
+            temperature: 0.2,
+            topP: 0.8,
+          }),
+          8_000,
+          'suggest_repair',
+        )
+        usedJsonFallback = usedJsonFallback || repairCompletion.usedJsonFallback
+        const repairedCards = coerceCardsFromModelContent(repairCompletion.content)
+        if (repairedCards.length > 0) {
+          cards = repairedCards
+          repairUsed = true
+        }
+      } catch {
+        // keep primary cards
       }
-
-      const completion = await withTimeout(
-        createSuggestCompletion(groq, messages),
-        12_000,
-        'suggest',
-      )
-      usedJsonFallback = usedJsonFallback || completion.usedJsonFallback
-
-      cards = coerceCardsFromModelContent(completion.content)
-      if (cards.length >= 2 || attempt === 1) break
     }
+
+    if (cards.length === 0 && hasSubstantiveTranscript(transcript)) {
+      attemptsUsed = Math.max(attemptsUsed, 3)
+      const forceMessages: Array<{ role: 'system' | 'user'; content: string }> = [
+        { role: 'system', content: REPAIR_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            'RECENT_TRANSCRIPT_TAIL:',
+            takeTail(transcript, REPAIR_TRANSCRIPT_CHARS),
+            '',
+            'No valid cards were parsed. The transcript has substantive content.',
+            'Return exactly 3 cards and do not return {"cards":[]} unless there is truly no meeting substance.',
+          ].join('\n'),
+        },
+      ]
+      try {
+        const forceCompletion = await withTimeout(
+          createSuggestCompletion(groq, forceMessages, {
+            maxTokens: FORCE_NONEMPTY_MAX_TOKENS,
+            temperature: 0.25,
+            topP: 0.85,
+          }),
+          8_000,
+          'suggest_force_nonempty',
+        )
+        usedJsonFallback = usedJsonFallback || forceCompletion.usedJsonFallback
+        const forcedCards = coerceCardsFromModelContent(forceCompletion.content)
+        if (forcedCards.length > 0) {
+          cards = forcedCards
+          repairUsed = true
+        }
+      } catch {
+        // keep existing cards (still empty)
+      }
+    }
+
+    const degraded = usedJsonFallback && !repairUsed
 
     console.log(
       JSON.stringify({
@@ -344,7 +460,10 @@ export async function POST(request: Request) {
         latencyMs: Date.now() - startedAt,
         charsIn: transcript.length,
         cardsOut: cards.length,
+        waitingLikeEmpty: cards.length === 0,
         partialCards: cards.length < 3,
+        degraded,
+        repairUsed,
         usedJsonFallback,
         attemptsUsed,
         suggestMaxTokens: SUGGEST_MAX_TOKENS,
@@ -352,9 +471,14 @@ export async function POST(request: Request) {
       }),
     )
 
-    return NextResponse.json(
-      usedJsonFallback ? { cards, degraded: true } : { cards },
-    )
+    const responsePayload: {
+      cards: SuggestionCard[]
+      degraded?: boolean
+      repaired?: boolean
+    } = { cards }
+    if (degraded) responsePayload.degraded = true
+    if (repairUsed) responsePayload.repaired = true
+    return NextResponse.json(responsePayload)
   } catch (err) {
     if (isUpstreamTimeoutError(err)) {
       console.log(

@@ -37,6 +37,7 @@ export interface SuggestionBatch {
   timestamp: string
   cards: SuggestionCard[]
   degraded?: boolean
+  repaired?: boolean
 }
 
 export interface ChatMessage {

@@ -6,7 +6,12 @@ export interface SuggestionsSlice {
   batches: SuggestionBatch[]
   summary: string
   meetingKind: MeetingKind | null
-  addBatch: (payload: { timestamp: string; cards: SuggestionCard[]; degraded?: boolean }) => void
+  addBatch: (payload: {
+    timestamp: string
+    cards: SuggestionCard[]
+    degraded?: boolean
+    repaired?: boolean
+  }) => void
   getRecentBatches: (count: number) => SuggestionBatch[]
   setSummary: (summary: string) => void
   setMeetingKind: (kind: MeetingKind) => void
@@ -17,10 +22,16 @@ export const createSuggestionsSlice: StateCreator<AllSlices, [], [], Suggestions
   batches: [],
   summary: '',
   meetingKind: null,
-  addBatch: ({ timestamp, cards, degraded }) =>
+  addBatch: ({ timestamp, cards, degraded, repaired }) =>
     set((s) => {
       const batchNumber = s.batches.length + 1
-      const newBatch: SuggestionBatch = { batchNumber, timestamp, cards, degraded }
+      const newBatch: SuggestionBatch = {
+        batchNumber,
+        timestamp,
+        cards,
+        degraded,
+        repaired,
+      }
       return { batches: [newBatch, ...s.batches] }
     }),
   getRecentBatches: (count) => get().batches.slice(0, Math.max(0, count)),

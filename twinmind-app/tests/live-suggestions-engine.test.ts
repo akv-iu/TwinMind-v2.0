@@ -52,6 +52,19 @@ describe('normalizeCards', () => {
     expect(result[0].type).toBe('QUESTION_TO_ASK')
   })
 
+  it('rejects previews that look like serialized JSON payloads', () => {
+    const result = normalizeCards([
+      {
+        type: 'TALKING_POINT',
+        preview:
+          '{"cards":[{"type":"QUESTION_TO_ASK","preview":"What should we ask next?"}]}',
+      },
+      sampleCards[0],
+    ])
+    expect(result).toHaveLength(1)
+    expect(result[0].type).toBe('QUESTION_TO_ASK')
+  })
+
   it('keeps three cards even when all types are the same', () => {
     const duplicateHeavy = [
       { type: 'QUESTION_TO_ASK', preview: 'What is the release date for launch?' },

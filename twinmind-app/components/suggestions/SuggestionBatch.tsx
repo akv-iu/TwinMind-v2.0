@@ -40,6 +40,7 @@ export function SuggestionBatch({
       <p className="mb-1 mt-3 text-center text-xs text-zinc-500">
         {'\u2014'} BATCH {batch.batchNumber} {'\u00B7'} {batch.timestamp}
         {batch.degraded ? ' \u00B7 schema-fallback' : ''}
+        {batch.repaired ? ' \u00B7 format-repair' : ''}
         {' \u2014'}
       </p>
     </div>
