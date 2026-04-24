@@ -7,12 +7,18 @@ import { SuggestionBatch } from './SuggestionBatch'
 import { formatCardType } from './SuggestionCard'
 import { useStore } from '@/store'
 import type { SuggestionCard, TranscriptLine } from '@/lib/types'
-import { takeTailByChars } from '@/lib/context'
 import {
   buildSummaryInput,
   refreshSummary,
-  shouldRefreshSummary,
 } from '@/lib/summary'
+import {
+  CHECKPOINT_SUMMARY_RETRY_COOLDOWN_MS,
+  getCheckpointSummaryWindow,
+  getSuggestTranscriptTailFromCheckpoint,
+  selectPriorBatchesForCheckpoint,
+  shouldStartCheckpointSummary,
+} from '@/lib/suggestCheckpoint'
+import { takeTailByChars } from '@/lib/context'
 import {
   classifyMeeting,
   shouldClassify,
@@ -25,6 +31,14 @@ import {
 } from '@/lib/clientErrorCopy'
 
 const COUNTDOWN_SECONDS = 30
+const CHECKPOINT_PENDING_LOG_BUCKET_MS = 30_000
+
+interface PendingCheckpoint {
+  requestId: number
+  snapshotBatchCount: number
+  snapshotLineCount: number
+  startedAtMs: number
+}
 
 function timestampNow(): string {
   return new Date().toLocaleTimeString('en-US', {
@@ -36,6 +50,18 @@ function timestampNow(): string {
 
 function countTranscriptChars(lines: TranscriptLine[]): number {
   return lines.reduce((total, line) => total + line.timestamp.length + 2 + line.text.length + 1, 0)
+}
+
+function logCheckpointEvent(event: string, payload: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === 'production') return
+  console.log(
+    JSON.stringify({
+      route: 'suggest-client',
+      subsystem: 'checkpoint',
+      event,
+      ...payload,
+    }),
+  )
 }
 
 interface SuggestResponse {
@@ -51,7 +77,6 @@ export interface SuggestionsColumnProps {
 
 export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsColumnProps) {
   const batches = useStore((s) => s.batches)
-  const getRecentBatches = useStore((s) => s.getRecentBatches)
   const summary = useStore((s) => s.summary)
   const setSummary = useStore((s) => s.setSummary)
   const meetingKind = useStore((s) => s.meetingKind)
@@ -77,21 +102,185 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const fireSuggestionsRef = useRef<() => Promise<void>>(async () => {})
   const isSummaryRefreshingRef = useRef(false)
   const isClassifyingRef = useRef(false)
-  const lastSummaryTranscriptCharsRef = useRef(0)
-  const lastSummaryBatchCountRef = useRef(0)
+  const committedCheckpointBatchCountRef = useRef(0)
+  const committedCheckpointLineCountRef = useRef(0)
+  const pendingCheckpointRef = useRef<PendingCheckpoint | null>(null)
+  const checkpointRequestSeqRef = useRef(0)
+  const summaryRetryNotBeforeMsRef = useRef(0)
+  const lastPendingAgeLogBucketRef = useRef(-1)
 
   useEffect(() => {
     if (batches.length !== 0 || summary.trim()) return
-    lastSummaryTranscriptCharsRef.current = 0
-    lastSummaryBatchCountRef.current = 0
+    committedCheckpointBatchCountRef.current = 0
+    committedCheckpointLineCountRef.current = 0
+    pendingCheckpointRef.current = null
+    checkpointRequestSeqRef.current = 0
+    summaryRetryNotBeforeMsRef.current = 0
+    lastPendingAgeLogBucketRef.current = -1
+    isSummaryRefreshingRef.current = false
   }, [batches.length, summary])
+
+  const startCheckpointSummary = useCallback(
+    (input: { apiKey: string; batchCount: number; transcriptLines: TranscriptLine[] }) => {
+      const pending = pendingCheckpointRef.current
+      if (pending) {
+        const ageMs = Date.now() - pending.startedAtMs
+        const ageBucket = Math.floor(ageMs / CHECKPOINT_PENDING_LOG_BUCKET_MS)
+        if (ageBucket > lastPendingAgeLogBucketRef.current) {
+          lastPendingAgeLogBucketRef.current = ageBucket
+          logCheckpointEvent('pending_age', {
+            requestId: pending.requestId,
+            ageMs,
+            snapshotBatchCount: pending.snapshotBatchCount,
+            committedCheckpointBatchCount: committedCheckpointBatchCountRef.current,
+          })
+        }
+        return
+      }
+
+      if (Date.now() < summaryRetryNotBeforeMsRef.current) {
+        return
+      }
+
+      if (
+        !shouldStartCheckpointSummary({
+          batchCount: input.batchCount,
+          committedCheckpointBatchCount: committedCheckpointBatchCountRef.current,
+          hasPendingCheckpoint: false,
+        })
+      ) {
+        return
+      }
+
+      const requestId = checkpointRequestSeqRef.current + 1
+      checkpointRequestSeqRef.current = requestId
+      const pendingCheckpoint: PendingCheckpoint = {
+        requestId,
+        snapshotBatchCount: input.batchCount,
+        snapshotLineCount: input.transcriptLines.length,
+        startedAtMs: Date.now(),
+      }
+      pendingCheckpointRef.current = pendingCheckpoint
+      isSummaryRefreshingRef.current = true
+      lastPendingAgeLogBucketRef.current = 0
+
+      logCheckpointEvent('triggered', {
+        requestId,
+        snapshotBatchCount: pendingCheckpoint.snapshotBatchCount,
+        snapshotLineCount: pendingCheckpoint.snapshotLineCount,
+        committedCheckpointBatchCount: committedCheckpointBatchCountRef.current,
+        committedCheckpointLineCount: committedCheckpointLineCountRef.current,
+      })
+
+      const priorSummary = useStore.getState().summary
+      const autoHealDrift = priorSummary.length > 1500
+      if (autoHealDrift && process.env.NODE_ENV !== 'production') {
+        console.warn(
+          '[summary:auto-heal] prior summary exceeded 1500 chars; forcing full re-summarize.',
+        )
+      }
+
+      const summaryWindow = getCheckpointSummaryWindow({
+        transcriptLines: input.transcriptLines,
+        committedCheckpointLineCount: committedCheckpointLineCountRef.current,
+        snapshotLineCount: pendingCheckpoint.snapshotLineCount,
+      })
+      const summaryInput = buildSummaryInput({
+        transcriptLines: summaryWindow,
+        suggestContextChars,
+        priorSummary: autoHealDrift ? '' : priorSummary,
+      })
+
+      if (!summaryInput.transcript.trim()) {
+        pendingCheckpointRef.current = null
+        isSummaryRefreshingRef.current = false
+        logCheckpointEvent('skipped_empty_transcript', {
+          requestId,
+          snapshotBatchCount: pendingCheckpoint.snapshotBatchCount,
+        })
+        return
+      }
+
+      void refreshSummary({
+        transcript: summaryInput.transcript,
+        apiKey: input.apiKey,
+        priorSummary: summaryInput.priorSummary,
+      })
+        .then((nextSummary) => {
+          const livePending = pendingCheckpointRef.current
+          if (!livePending || livePending.requestId !== requestId) {
+            logCheckpointEvent('stale_response_ignored', { requestId })
+            return
+          }
+
+          pendingCheckpointRef.current = null
+          isSummaryRefreshingRef.current = false
+          if (!nextSummary) {
+            summaryRetryNotBeforeMsRef.current =
+              Date.now() + CHECKPOINT_SUMMARY_RETRY_COOLDOWN_MS
+            logCheckpointEvent('summary_empty_retry_scheduled', {
+              requestId,
+              retryAtMs: summaryRetryNotBeforeMsRef.current,
+            })
+            return
+          }
+
+          const prevBatch = committedCheckpointBatchCountRef.current
+          const prevLine = committedCheckpointLineCountRef.current
+          setSummary(nextSummary)
+          committedCheckpointBatchCountRef.current = livePending.snapshotBatchCount
+          committedCheckpointLineCountRef.current = livePending.snapshotLineCount
+          summaryRetryNotBeforeMsRef.current = 0
+          lastPendingAgeLogBucketRef.current = -1
+
+          logCheckpointEvent('commit_applied', {
+            requestId,
+            fromBatchCount: prevBatch,
+            toBatchCount: livePending.snapshotBatchCount,
+            fromLineCount: prevLine,
+            toLineCount: livePending.snapshotLineCount,
+            summaryChars: nextSummary.length,
+          })
+        })
+        .catch((error) => {
+          const livePending = pendingCheckpointRef.current
+          if (!livePending || livePending.requestId !== requestId) {
+            logCheckpointEvent('stale_error_ignored', { requestId })
+            return
+          }
+
+          pendingCheckpointRef.current = null
+          isSummaryRefreshingRef.current = false
+          summaryRetryNotBeforeMsRef.current =
+            Date.now() + CHECKPOINT_SUMMARY_RETRY_COOLDOWN_MS
+
+          const message = error instanceof Error ? error.message : 'unknown'
+          logCheckpointEvent('summary_failed_retry_scheduled', {
+            requestId,
+            retryAtMs: summaryRetryNotBeforeMsRef.current,
+            error: message,
+          })
+        })
+    },
+    [setSummary, suggestContextChars],
+  )
 
   const fireSuggestions = useCallback(async () => {
     if (isLoadingRef.current) return
     const key = apiKey.trim()
     if (!key) return
 
-    const recentTranscript = takeTailByChars(transcriptLines, suggestContextChars)
+    const currentState = useStore.getState()
+    const transcriptLinesNow = currentState.transcriptLines
+    const currentSummary = currentState.summary
+    const currentMeetingKind = currentState.meetingKind
+    const currentBatches = currentState.batches
+
+    const recentTranscript = getSuggestTranscriptTailFromCheckpoint({
+      transcriptLines: transcriptLinesNow,
+      committedCheckpointLineCount: committedCheckpointLineCountRef.current,
+      suggestContextChars,
+    })
     if (!recentTranscript.trim()) return
     const hashInput = `${recentTranscript.length}:${recentTranscript.slice(-64)}`
     if (hashInput === lastFireHashRef.current) {
@@ -104,15 +293,18 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
     const controller = new AbortController()
     abortRef.current = controller
 
-    const priorBatches = getRecentBatches(2)
+    const priorBatches = selectPriorBatchesForCheckpoint({
+      batches: currentBatches,
+      committedCheckpointBatchCount: committedCheckpointBatchCountRef.current,
+    })
       .flatMap((batch) => batch.cards.map((card) => `${formatCardType(card.type)}: ${card.preview}`))
       .join('\n')
 
     const payload = {
       transcriptTail: recentTranscript,
-      rollingSummary: summary,
+      rollingSummary: currentSummary,
       priorBatchesText: priorBatches,
-      meetingKind: meetingKind ?? undefined,
+      meetingKind: currentMeetingKind ?? undefined,
       intentPrompts: suggestIntentPrompts,
       apiKey: key,
     }
@@ -155,60 +347,26 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       setShowRepairedHint(data.repaired === true)
       setWaitingForSubstance(false)
 
-      const nextBatchCount = useStore.getState().batches.length
-      const transcriptChars = countTranscriptChars(transcriptLines)
-      const refreshNeeded = shouldRefreshSummary({
-        transcriptChars,
+      const latestState = useStore.getState()
+      const nextBatchCount = latestState.batches.length
+      const latestTranscriptLines = latestState.transcriptLines
+      const transcriptChars = countTranscriptChars(latestTranscriptLines)
+
+      startCheckpointSummary({
+        apiKey: key,
         batchCount: nextBatchCount,
-        lastSummaryTranscriptChars: lastSummaryTranscriptCharsRef.current,
-        lastSummaryBatchCount: lastSummaryBatchCountRef.current,
+        transcriptLines: latestTranscriptLines,
       })
 
-      if (refreshNeeded && !isSummaryRefreshingRef.current) {
-        const priorSummary = useStore.getState().summary
-        const autoHealDrift = priorSummary.length > 1500
-        if (autoHealDrift && process.env.NODE_ENV !== 'production') {
-          console.warn(
-            '[summary:auto-heal] prior summary exceeded 1500 chars; forcing full re-summarize.',
-          )
-        }
-        const summaryInput = buildSummaryInput({
-          transcriptLines,
-          suggestContextChars,
-          priorSummary: autoHealDrift ? '' : priorSummary,
-        })
-
-        if (summaryInput.transcript.trim()) {
-          isSummaryRefreshingRef.current = true
-          void refreshSummary({
-            transcript: summaryInput.transcript,
-            apiKey: key,
-            priorSummary: summaryInput.priorSummary,
-          })
-            .then((nextSummary) => {
-              if (!nextSummary) return
-              setSummary(nextSummary)
-              lastSummaryTranscriptCharsRef.current = transcriptChars
-              lastSummaryBatchCountRef.current = nextBatchCount
-            })
-            .catch(() => {
-              // summary failures are non-fatal for live suggestions
-            })
-            .finally(() => {
-              isSummaryRefreshingRef.current = false
-            })
-        }
-      }
-
       const shouldRunClassify = shouldClassify({
-        meetingKind,
+        meetingKind: latestState.meetingKind,
         batchCount: nextBatchCount,
         transcriptChars,
         inFlight: isClassifyingRef.current,
       })
       if (shouldRunClassify) {
         isClassifyingRef.current = true
-        const classifyInput = takeTailByChars(transcriptLines, 6000)
+        const classifyInput = takeTailByChars(latestTranscriptLines, 6000)
         void classifyMeeting(classifyInput, key)
           .then((kind) => {
             setMeetingKind(kind)
@@ -241,14 +399,10 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   }, [
     addBatch,
     apiKey,
-    getRecentBatches,
-    setSummary,
+    startCheckpointSummary,
     suggestContextChars,
     suggestIntentPrompts,
-    summary,
-    meetingKind,
     setMeetingKind,
-    transcriptLines,
   ])
 
   useEffect(() => {

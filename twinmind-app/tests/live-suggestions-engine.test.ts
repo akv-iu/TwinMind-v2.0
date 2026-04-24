@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { normalizeCards } from '@/app/api/suggest/route'
+import { dedupeDistinctCards, normalizeCards } from '@/app/api/suggest/route'
 import { getBatchOpacity } from '@/components/suggestions/SuggestionBatch'
 import { formatCardType } from '@/components/suggestions/SuggestionCard'
 import { useStore } from '@/store'
@@ -85,6 +85,51 @@ describe('normalizeCards', () => {
     const result = normalizeCards(varied)
     expect(result).toHaveLength(3)
     expect(new Set(result.map((card) => card.type)).size).toBe(2)
+  })
+
+  it('dedupes near-identical preview text and keeps unique follow-ups', () => {
+    const result = normalizeCards([
+      {
+        type: 'QUESTION_TO_ASK',
+        preview: 'What is the blocker on the migration?',
+      },
+      {
+        type: 'QUESTION_TO_ASK',
+        preview: 'What is the blocker on the migration !',
+      },
+      {
+        type: 'FACT_CHECK',
+        preview: 'Can we verify whether the 18% figure is monthly?',
+      },
+      {
+        type: 'TALKING_POINT',
+        preview: 'The timeline moved from Tuesday to Friday after infra review.',
+      },
+    ])
+    expect(result).toHaveLength(3)
+    expect(result[0].preview).toBe('What is the blocker on the migration?')
+    expect(result[1].type).toBe('FACT_CHECK')
+    expect(result[2].type).toBe('TALKING_POINT')
+  })
+})
+
+describe('dedupeDistinctCards', () => {
+  it('returns fewer than three cards in strict mode when only duplicates remain', () => {
+    const result = dedupeDistinctCards([
+      {
+        type: 'QUESTION_TO_ASK',
+        preview: 'Who owns the final sign-off on launch readiness?',
+      },
+      {
+        type: 'QUESTION_TO_ASK',
+        preview: 'Who owns the final sign-off on launch readiness !',
+      },
+      {
+        type: 'QUESTION_TO_ASK',
+        preview: 'Who owns the final sign-off on launch readiness?',
+      },
+    ])
+    expect(result).toHaveLength(1)
   })
 })
 

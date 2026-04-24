@@ -145,6 +145,29 @@ function fitPreview(value: string): string {
   return `${trimmed.slice(0, 177)}...`
 }
 
+function normalizePreviewForDistinctness(preview: string): string {
+  return preview
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function dedupeDistinctCards(cards: SuggestionCard[]): SuggestionCard[] {
+  const distinct: SuggestionCard[] = []
+  const seen = new Set<string>()
+
+  for (const card of cards) {
+    const key = normalizePreviewForDistinctness(card.preview)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    distinct.push(card)
+    if (distinct.length >= 3) break
+  }
+
+  return distinct
+}
+
 function parseCardsFromPlainText(raw: string): SuggestionCard[] {
   const lines = raw
     .split('\n')
@@ -153,7 +176,7 @@ function parseCardsFromPlainText(raw: string): SuggestionCard[] {
 
   const cards: SuggestionCard[] = []
   for (const line of lines) {
-    if (cards.length >= 3) break
+    if (cards.length >= 12) break
     const cleaned = line.replace(/^[\-\*\d\.\)\s]+/, '')
     const match = cleaned.match(
       /^(QUESTION_TO_ASK|TALKING_POINT|ANSWER|FACT_CHECK)\s*[\|\:\-]\s*(.+)$/i,
@@ -209,7 +232,7 @@ function coerceCardsFromModelContent(content: string): SuggestionCard[] {
     // fall through
   }
 
-  return parseCardsFromPlainText(stripped)
+  return dedupeDistinctCards(parseCardsFromPlainText(stripped))
 }
 
 function safeSerializeError(error: unknown): string {
@@ -448,7 +471,7 @@ export function normalizeCards(input: unknown): SuggestionCard[] {
 
   const normalized: SuggestionCard[] = []
   for (const item of arr) {
-    if (normalized.length >= 3) break
+    if (normalized.length >= 12) break
     if (!item || typeof item !== 'object') continue
 
     const rec = item as Record<string, unknown>
@@ -465,7 +488,7 @@ export function normalizeCards(input: unknown): SuggestionCard[] {
     normalized.push({ type: typed, preview: trimmedPreview })
   }
 
-  return normalized
+  return dedupeDistinctCards(normalized)
 }
 
 interface CompletionResult {
@@ -681,7 +704,9 @@ export async function POST(request: Request) {
       }
     }
 
-    const degraded = usedJsonFallback && !repairUsed
+    const strictDistinctShortfall = cards.length > 0 && cards.length < 3
+    const strictDistinctMissingCount = strictDistinctShortfall ? 3 - cards.length : 0
+    const degraded = (usedJsonFallback && !repairUsed) || strictDistinctShortfall
 
     console.log(
       JSON.stringify({
@@ -692,6 +717,8 @@ export async function POST(request: Request) {
         waitingLikeEmpty: cards.length === 0,
         partialCards: cards.length < 3,
         degraded,
+        strictDistinctShortfall,
+        strictDistinctMissingCount,
         repairUsed,
         usedJsonFallback,
         attemptsUsed,
