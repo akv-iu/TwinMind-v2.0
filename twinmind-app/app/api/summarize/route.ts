@@ -23,11 +23,10 @@ const SUMMARY_SYSTEM_PROMPT = [
   '- If PRIOR_SUMMARY contains verbatim quotes, collapse them into topic bullets.',
   '',
   'OUTPUT',
-  'Produce 3-5 short bullet points covering:',
+  'Produce 3-4 short bullet points covering:',
   '- Who is involved (names or roles if mentioned)',
   '- Main topics discussed so far',
   '- Decisions made or open questions',
-  '- Tone/kind if obvious (e.g. standup, design review, 1:1)',
   'Prefer the combined whole-meeting view over just the tail when PRIOR_SUMMARY is provided.',
   'Max 160 words total. Plain text, no markdown headers. Start each bullet with "- ".',
 ].join('\n')

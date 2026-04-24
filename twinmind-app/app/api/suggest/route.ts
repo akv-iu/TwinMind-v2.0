@@ -25,6 +25,7 @@ const VALID_MEETING_KINDS: ReadonlySet<MeetingKind> = new Set([
   'interview',
   'brainstorm',
   'presentation',
+  'retrospective',
   'other',
 ])
 

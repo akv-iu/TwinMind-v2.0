@@ -12,6 +12,7 @@ export type MeetingKind =
   | 'interview'
   | 'brainstorm'
   | 'presentation'
+  | 'retrospective'
   | 'other'
 
 export interface SuggestIntentPrompts {
