@@ -8,7 +8,7 @@ export const SUGGEST_INTENT_PROMPTS_DEFAULT: SuggestIntentPrompts = {
   TALKING_POINT:
     'A specific fact, metric, comparison, or anecdote from the conversation that the user could raise now.',
   ANSWER:
-    'A direct answer to a question just asked in the meeting, drawn from the transcript or well-known facts.',
+    'A direct answer to a question just asked, OR a clarification or correction the speaker could offer proactively - drawn from the transcript or well-known facts.',
   FACT_CHECK:
     'Flag a specific claim that needs verification - name the claim and state what to check.',
 }

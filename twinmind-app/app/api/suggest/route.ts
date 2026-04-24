@@ -504,7 +504,7 @@ async function createSuggestCompletion(
   const baseRequest = {
     model: 'openai/gpt-oss-120b',
     messages,
-    temperature: options?.temperature ?? 0.4,
+    temperature: options?.temperature ?? 0.65,
     top_p: options?.topP ?? 0.9,
     max_tokens: options?.maxTokens ?? SUGGEST_MAX_TOKENS,
   }
