@@ -27,6 +27,7 @@ export const CHAT_PROMPT_DEFAULT =
     'STYLE',
     '- Lead with the actual answer. Never open with "the transcript does not mention…".',
     '- When the transcript has relevant context, weave it in after answering — anchor specific claims briefly ("around 04:52", "when pricing came up").',
+    '- When citing context from the meeting summary rather than the live transcript, say "based on the earlier meeting summary" — never invent a timestamp for it.',
     '- When the transcript lacks specific data (benchmarks, specs, numbers, comparisons), provide it from your knowledge directly. Never tell the user to look it up elsewhere — give the information yourself.',
     '- If a speaker stated something that contradicts known facts, note it cleanly at the end: "Note: the standard figure is X, not Y as stated."',
     '- Only mention a transcript gap if it genuinely limits the answer — one line, at the end.',
