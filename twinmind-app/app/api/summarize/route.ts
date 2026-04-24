@@ -6,7 +6,7 @@ import { isUpstreamTimeoutError, withTimeout } from '@/lib/server/withTimeout'
 
 export const runtime = 'nodejs'
 
-const SUMMARY_MAX_TOKENS = 160
+const SUMMARY_MAX_TOKENS = 220
 const SUMMARY_MAX_CHARS = 800
 
 const SUMMARY_SYSTEM_PROMPT = [
@@ -29,7 +29,7 @@ const SUMMARY_SYSTEM_PROMPT = [
   '- Decisions made or open questions',
   '- Tone/kind if obvious (e.g. standup, design review, 1:1)',
   'Prefer the combined whole-meeting view over just the tail when PRIOR_SUMMARY is provided.',
-  'Max 120 words total. Plain text, no markdown headers. Start each bullet with "- ".',
+  'Max 160 words total. Plain text, no markdown headers. Start each bullet with "- ".',
 ].join('\n')
 
 function isValidApiKeyFormat(value: string): boolean {

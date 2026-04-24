@@ -8,14 +8,12 @@ import { formatCardType } from './SuggestionCard'
 import { useStore } from '@/store'
 import type { SuggestionCard, TranscriptLine } from '@/lib/types'
 import {
-  buildSummaryInput,
   refreshSummary,
 } from '@/lib/summary'
 import {
   CHECKPOINT_SUMMARY_RETRY_COOLDOWN_MS,
   getCheckpointSummaryWindow,
   getSuggestTranscriptTailFromCheckpoint,
-  selectPriorBatchesForCheckpoint,
   shouldStartCheckpointSummary,
 } from '@/lib/suggestCheckpoint'
 import { takeTailByChars } from '@/lib/context'
@@ -52,6 +50,10 @@ function countTranscriptChars(lines: TranscriptLine[]): number {
   return lines.reduce((total, line) => total + line.timestamp.length + 2 + line.text.length + 1, 0)
 }
 
+function formatTranscriptForSummary(lines: TranscriptLine[]): string {
+  return lines.map((line) => `${line.timestamp}  ${line.text}`).join('\n')
+}
+
 function logCheckpointEvent(event: string, payload: Record<string, unknown>): void {
   if (process.env.NODE_ENV === 'production') return
   console.log(
@@ -77,6 +79,7 @@ export interface SuggestionsColumnProps {
 
 export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsColumnProps) {
   const batches = useStore((s) => s.batches)
+  const getRecentBatches = useStore((s) => s.getRecentBatches)
   const summary = useStore((s) => s.summary)
   const setSummary = useStore((s) => s.setSummary)
   const meetingKind = useStore((s) => s.meetingKind)
@@ -173,25 +176,25 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       })
 
       const priorSummary = useStore.getState().summary
-      const autoHealDrift = priorSummary.length > 1500
-      if (autoHealDrift && process.env.NODE_ENV !== 'production') {
-        console.warn(
-          '[summary:auto-heal] prior summary exceeded 1500 chars; forcing full re-summarize.',
-        )
-      }
 
       const summaryWindow = getCheckpointSummaryWindow({
         transcriptLines: input.transcriptLines,
         committedCheckpointLineCount: committedCheckpointLineCountRef.current,
         snapshotLineCount: pendingCheckpoint.snapshotLineCount,
       })
-      const summaryInput = buildSummaryInput({
-        transcriptLines: summaryWindow,
-        suggestContextChars,
-        priorSummary: autoHealDrift ? '' : priorSummary,
+      const summaryTranscript = formatTranscriptForSummary(summaryWindow)
+      const firstSummaryLine = summaryWindow[0]
+      const lastSummaryLine = summaryWindow[summaryWindow.length - 1]
+
+      logCheckpointEvent('window_built', {
+        requestId,
+        windowLineCount: summaryWindow.length,
+        windowChars: summaryTranscript.length,
+        windowFirstTimestamp: firstSummaryLine?.timestamp ?? null,
+        windowLastTimestamp: lastSummaryLine?.timestamp ?? null,
       })
 
-      if (!summaryInput.transcript.trim()) {
+      if (!summaryTranscript.trim()) {
         pendingCheckpointRef.current = null
         isSummaryRefreshingRef.current = false
         logCheckpointEvent('skipped_empty_transcript', {
@@ -202,9 +205,9 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       }
 
       void refreshSummary({
-        transcript: summaryInput.transcript,
+        transcript: summaryTranscript,
         apiKey: input.apiKey,
-        priorSummary: summaryInput.priorSummary,
+        priorSummary,
       })
         .then((nextSummary) => {
           const livePending = pendingCheckpointRef.current
@@ -262,7 +265,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
           })
         })
     },
-    [setSummary, suggestContextChars],
+    [setSummary],
   )
 
   const fireSuggestions = useCallback(async () => {
@@ -274,15 +277,14 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
     const transcriptLinesNow = currentState.transcriptLines
     const currentSummary = currentState.summary
     const currentMeetingKind = currentState.meetingKind
-    const currentBatches = currentState.batches
-
+    const transcriptLineCount = transcriptLinesNow.length
     const recentTranscript = getSuggestTranscriptTailFromCheckpoint({
       transcriptLines: transcriptLinesNow,
       committedCheckpointLineCount: committedCheckpointLineCountRef.current,
       suggestContextChars,
     })
     if (!recentTranscript.trim()) return
-    const hashInput = `${recentTranscript.length}:${recentTranscript.slice(-64)}`
+    const hashInput = `${transcriptLineCount}:${recentTranscript.length}:${recentTranscript.slice(-64)}`
     if (hashInput === lastFireHashRef.current) {
       deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
       setCountdown(COUNTDOWN_SECONDS)
@@ -293,10 +295,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
     const controller = new AbortController()
     abortRef.current = controller
 
-    const priorBatches = selectPriorBatchesForCheckpoint({
-      batches: currentBatches,
-      committedCheckpointBatchCount: committedCheckpointBatchCountRef.current,
-    })
+    const priorBatches = getRecentBatches(2)
       .flatMap((batch) => batch.cards.map((card) => `${formatCardType(card.type)}: ${card.preview}`))
       .join('\n')
 
@@ -399,6 +398,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   }, [
     addBatch,
     apiKey,
+    getRecentBatches,
     startCheckpointSummary,
     suggestContextChars,
     suggestIntentPrompts,
