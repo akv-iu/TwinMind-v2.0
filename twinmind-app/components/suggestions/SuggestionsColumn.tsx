@@ -101,6 +101,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const isLoadingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const deadlineRef = useRef<number>(Date.now() + COUNTDOWN_SECONDS * 1000)
+  const pausedRemainingMsRef = useRef<number>(COUNTDOWN_SECONDS * 1000)
   const lastFireHashRef = useRef<string>('')
   const fireSuggestionsRef = useRef<() => Promise<void>>(async () => {})
   const isSummaryRefreshingRef = useRef(false)
@@ -287,6 +288,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
     const hashInput = `${transcriptLineCount}:${recentTranscript.length}:${recentTranscript.slice(-64)}`
     if (hashInput === lastFireHashRef.current) {
       deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
+      pausedRemainingMsRef.current = COUNTDOWN_SECONDS * 1000
       setCountdown(COUNTDOWN_SECONDS)
       return
     }
@@ -388,6 +390,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       }
     } finally {
       deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
+      pausedRemainingMsRef.current = COUNTDOWN_SECONDS * 1000
       setCountdown(COUNTDOWN_SECONDS)
       isLoadingRef.current = false
       setIsLoading(false)
@@ -410,9 +413,17 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   }, [fireSuggestions])
 
   useEffect(() => {
-    if (!isRecording) return
-    deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
-    setCountdown(COUNTDOWN_SECONDS)
+    if (!isRecording) {
+      pausedRemainingMsRef.current = Math.max(0, deadlineRef.current - Date.now())
+      return
+    }
+
+    const resumeMs =
+      pausedRemainingMsRef.current > 0
+        ? pausedRemainingMsRef.current
+        : COUNTDOWN_SECONDS * 1000
+    deadlineRef.current = Date.now() + resumeMs
+    setCountdown(Math.ceil(resumeMs / 1000))
 
     const id = setInterval(() => {
       const remaining = Math.max(
@@ -424,7 +435,10 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
         void fireSuggestionsRef.current()
       }
     }, 250)
-    return () => clearInterval(id)
+    return () => {
+      pausedRemainingMsRef.current = Math.max(0, deadlineRef.current - Date.now())
+      clearInterval(id)
+    }
   }, [isRecording])
 
   useEffect(() => {
@@ -443,6 +457,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   function handleReload() {
     if (isLoading || !apiKey.trim()) return
     deadlineRef.current = Date.now() + COUNTDOWN_SECONDS * 1000
+    pausedRemainingMsRef.current = COUNTDOWN_SECONDS * 1000
     setCountdown(COUNTDOWN_SECONDS)
     lastFireHashRef.current = ''
     void fireSuggestions()
