@@ -28,7 +28,7 @@ const SUMMARY_SYSTEM_PROMPT = [
   '- Main topics discussed so far',
   '- Decisions made or open questions',
   'Prefer the combined whole-meeting view over just the tail when PRIOR_SUMMARY is provided.',
-  'Max 160 words total. Plain text, no markdown headers. Start each bullet with "- ".',
+  'Max 140 words total. Plain text, no markdown headers. Start each bullet with "- ".',
 ].join('\n')
 
 function isValidApiKeyFormat(value: string): boolean {
