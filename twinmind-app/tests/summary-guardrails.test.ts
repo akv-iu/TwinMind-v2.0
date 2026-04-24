@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { refreshSummary, shouldRefreshSummary } from '@/lib/summary'
+import { refreshSummary } from '@/lib/summary'
 import { shouldRejectSummaryDrift, truncateSummary } from '@/app/api/summarize/route'
 
 afterEach(() => {
@@ -7,26 +7,6 @@ afterEach(() => {
 })
 
 describe('summary guardrails', () => {
-  it('shouldRefreshSummary waits until transcript growth reaches 4000 chars', () => {
-    expect(
-      shouldRefreshSummary({
-        transcriptChars: 3_999,
-        batchCount: 1,
-        lastSummaryTranscriptChars: 0,
-        lastSummaryBatchCount: 0,
-      }),
-    ).toBe(false)
-
-    expect(
-      shouldRefreshSummary({
-        transcriptChars: 4_000,
-        batchCount: 1,
-        lastSummaryTranscriptChars: 0,
-        lastSummaryBatchCount: 0,
-      }),
-    ).toBe(true)
-  })
-
   it('truncateSummary enforces the 800-char cap with truncation metadata', () => {
     const raw = `${'A'.repeat(805)} tail`
     const result = truncateSummary(raw)

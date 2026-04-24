@@ -57,11 +57,13 @@ describe('chat slice', () => {
     expect(useStore.getState().chatMessages).toHaveLength(0)
   })
 
-  it('clearChat empties the conversation', () => {
-    useStore.getState().addUserMessage({ suggestionType: null, text: 'a' })
-    useStore.getState().beginAssistantMessage()
-    useStore.getState().clearChat()
-    expect(useStore.getState().chatMessages).toHaveLength(0)
+  it('addUserMessage assigns a unique id to each message', () => {
+    useStore.getState().addUserMessage({ suggestionType: null, text: 'first' })
+    useStore.getState().addUserMessage({ suggestionType: null, text: 'second' })
+    const [a, b] = useStore.getState().chatMessages
+    expect(typeof a.id).toBe('string')
+    expect(a.id.length).toBeGreaterThan(0)
+    expect(a.id).not.toBe(b.id)
   })
 })
 

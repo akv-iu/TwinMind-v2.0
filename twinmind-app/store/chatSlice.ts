@@ -9,7 +9,6 @@ export interface ChatSlice {
   appendToLastMessage: (delta: string) => void
   finaliseLastMessage: () => void
   markLastMessageFailed: () => void
-  clearChat: () => void
 }
 
 export const createChatSlice: StateCreator<AllSlices, [], [], ChatSlice> = (set) => ({
@@ -17,12 +16,18 @@ export const createChatSlice: StateCreator<AllSlices, [], [], ChatSlice> = (set)
   addUserMessage: ({ suggestionType, text }) => {
     if (!text.trim()) return
     set((s) => ({
-      chatMessages: [...s.chatMessages, { role: 'user', suggestionType, text }],
+      chatMessages: [
+        ...s.chatMessages,
+        { id: crypto.randomUUID(), role: 'user', suggestionType, text },
+      ],
     }))
   },
   beginAssistantMessage: () =>
     set((s) => ({
-      chatMessages: [...s.chatMessages, { role: 'assistant', text: '', isFinalized: false }],
+      chatMessages: [
+        ...s.chatMessages,
+        { id: crypto.randomUUID(), role: 'assistant', text: '', isFinalized: false },
+      ],
     })),
   appendToLastMessage: (delta) =>
     set((s) => {
@@ -49,5 +54,4 @@ export const createChatSlice: StateCreator<AllSlices, [], [], ChatSlice> = (set)
       next[next.length - 1] = { ...last, isFailed: true, isFinalized: true }
       return { chatMessages: next }
     }),
-  clearChat: () => set({ chatMessages: [] }),
 })

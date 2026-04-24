@@ -29,11 +29,13 @@ function sampleBatches(): SuggestionBatch[] {
 function sampleChat(): ChatMessage[] {
   return [
     {
+      id: 'msg-1',
       role: 'user',
       suggestionType: 'FACT_CHECK',
       text: 'Can we verify that metric?',
     },
     {
+      id: 'msg-2',
       role: 'assistant',
       text: 'The metric was revised last quarter.',
     },

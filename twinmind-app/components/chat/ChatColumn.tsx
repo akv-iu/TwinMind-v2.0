@@ -320,7 +320,7 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
             const isLast = index === chatMessages.length - 1
             return (
               <ChatBubble
-                key={index}
+                key={message.id}
                 message={message}
                 isStreaming={isStreaming && isLast && message.role === 'assistant' && !message.isFinalized}
                 onRetryLast={isLast ? handleRetryLast : undefined}

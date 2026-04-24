@@ -41,6 +41,7 @@ export interface SuggestionBatch {
 }
 
 export interface ChatMessage {
+  id: string
   role: 'user' | 'assistant'
   suggestionType?: CardType | null
   text: string
