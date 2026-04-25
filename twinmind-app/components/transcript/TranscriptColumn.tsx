@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Download } from 'lucide-react'
 import { ColumnHeader } from '@/components/layout/ColumnHeader'
 import { MicButton } from './MicButton'
@@ -34,8 +34,17 @@ export function TranscriptColumn() {
     error,
     requestMicrophoneAccess,
     startRecording,
+    startRecordingWithSystemAudio,
     stopRecording,
   } = useAudioRecorder()
+
+  const [audioMode, setAudioMode] = useState<'mic' | 'virtual'>('mic')
+
+  const isMac =
+    typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac')
+  const supportsSystemAudio =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.mediaDevices?.getDisplayMedia === 'function'
   const transcriptLines = useStore((s) => s.transcriptLines)
   const batches = useStore((s) => s.batches)
   const chatMessages = useStore((s) => s.chatMessages)
@@ -60,6 +69,7 @@ export function TranscriptColumn() {
 
   function handleMicClick() {
     if (isRecording) stopRecording()
+    else if (audioMode === 'virtual') void startRecordingWithSystemAudio()
     else void startRecording()
   }
 
@@ -105,6 +115,52 @@ export function TranscriptColumn() {
         {!noKey && hasMicPermission === false && !error && (
           <p className="px-2 text-center text-xs text-zinc-500">
             Allow microphone access in your browser, then click the mic button.
+          </p>
+        )}
+        {!noKey && (
+          <div className="flex w-full overflow-hidden rounded-lg border border-zinc-700">
+            <button
+              type="button"
+              disabled={isRecording}
+              onClick={() => setAudioMode('mic')}
+              className={[
+                'flex-1 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors',
+                'disabled:cursor-not-allowed',
+                audioMode === 'mic'
+                  ? 'bg-zinc-700 text-zinc-100'
+                  : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+              ].join(' ')}
+            >
+              Mic Only
+            </button>
+            {supportsSystemAudio ? (
+              <button
+                type="button"
+                disabled={isRecording}
+                onClick={() => setAudioMode('virtual')}
+                className={[
+                  'flex-1 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors',
+                  'disabled:cursor-not-allowed',
+                  audioMode === 'virtual'
+                    ? 'bg-zinc-700 text-zinc-100'
+                    : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+                ].join(' ')}
+              >
+                Virtual Meeting
+              </button>
+            ) : (
+              <span
+                title="Not supported in this browser"
+                className="flex-1 cursor-not-allowed py-1.5 text-center text-xs uppercase tracking-widest text-zinc-600"
+              >
+                Virtual Meeting
+              </span>
+            )}
+          </div>
+        )}
+        {audioMode === 'virtual' && isMac && !noKey && (
+          <p className="px-2 text-center text-xs text-amber-400">
+            On Mac, captures browser tab audio only. For Teams or Zoom, use the browser version.
           </p>
         )}
       </div>

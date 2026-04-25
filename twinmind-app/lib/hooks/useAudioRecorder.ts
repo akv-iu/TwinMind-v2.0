@@ -139,6 +139,7 @@ export interface UseAudioRecorderResult {
   error: string | null
   requestMicrophoneAccess: () => Promise<boolean>
   startRecording: () => Promise<void>
+  startRecordingWithSystemAudio: () => Promise<void>
   stopRecording: () => void
 }
 
@@ -162,6 +163,9 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   const shouldRecordRef = useRef<boolean>(false)
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve())
   const micTrackBindingRef = useRef<MicTrackBinding | null>(null)
+  const systemStreamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const cycleStreamRef = useRef<MediaStream | null>(null)
 
   useEffect(() => {
     apiKeyRef.current = apiKey
@@ -233,6 +237,13 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     micTrackBindingRef.current = null
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
+    systemStreamRef.current?.getTracks().forEach((t) => t.stop())
+    systemStreamRef.current = null
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {})
+      audioContextRef.current = null
+    }
+    cycleStreamRef.current = null
   }, [])
 
   const enqueueChunkUpload = useCallback(
@@ -311,7 +322,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
           stopStreamTracks()
           return
         }
-        if (streamRef.current !== stream) return
+        if (cycleStreamRef.current !== stream) return
         startRecorderCycle(stream)
       }
 
@@ -345,6 +356,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
+      cycleStreamRef.current = stream
       shouldRecordRef.current = true
       setHasMicPermission(true)
       lastTranscriptTailRef.current = ''
@@ -407,6 +419,133 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     setIsRecording(false)
   }, [clearChunkTimer, stopStreamTracks])
 
+  const startRecordingWithSystemAudio = useCallback(async () => {
+    if (isRecording) return
+    setError(null)
+
+    if (!apiKeyRef.current.trim()) {
+      setError('Add your Groq API key in Settings to start.')
+      return
+    }
+
+    // Step 1 — Browser support check
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
+      setError('System audio capture is not supported in this browser.')
+      return
+    }
+
+    let displayStream: MediaStream | null = null
+
+    // Step 2 — Acquire display stream
+    // video: true is required — browsers reject audio-only getDisplayMedia on many platforms.
+    // We never use the video track; it is stopped by stopStreamTracks on session end.
+    try {
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
+        audio: true,
+        video: { width: 1, height: 1, frameRate: 1 },
+      })
+    } catch (err) {
+      const isNotAllowed = err instanceof DOMException && err.name === 'NotAllowedError'
+      setError(
+        isNotAllowed
+          ? 'Sharing cancelled — switch to Mic Only or try again.'
+          : 'Could not capture system audio. Please try again.',
+      )
+      return
+    }
+
+    // Edge Case 2 — User shared without enabling audio
+    if (displayStream.getAudioTracks().length === 0) {
+      displayStream.getTracks().forEach((t) => t.stop())
+      setError(
+        "No audio was shared. Try again and check 'Also share system audio' in the dialog.",
+      )
+      return
+    }
+
+    // Step 3 — Acquire mic stream (display stream opened first; if mic fails, close display)
+    let micStream: MediaStream | null = null
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch (err) {
+      displayStream.getTracks().forEach((t) => t.stop())
+      setHasMicPermission(false)
+      const message = err instanceof Error ? err.message : 'Could not access microphone.'
+      setError(message)
+      return
+    }
+
+    // Step 4 — Mix mic + display audio via AudioContext
+    const audioContext = new AudioContext()
+    const destination = audioContext.createMediaStreamDestination()
+    audioContext.createMediaStreamSource(micStream).connect(destination)
+    audioContext.createMediaStreamSource(displayStream).connect(destination)
+
+    streamRef.current = micStream
+    systemStreamRef.current = displayStream
+    audioContextRef.current = audioContext
+    cycleStreamRef.current = destination.stream
+    shouldRecordRef.current = true
+    setHasMicPermission(true)
+    lastTranscriptTailRef.current = ''
+    setIsMicMuted(false)
+    setIsRecording(true)
+
+    // Step 5a — Mic track listeners (mute / disconnect)
+    const micTrack = micStream.getAudioTracks()[0]
+    if (micTrack) {
+      micTrackBindingRef.current?.detach()
+      micTrackBindingRef.current = attachMicTrackListeners(micTrack, {
+        onMutedChange: (nextMuted) => setIsMicMuted(nextMuted),
+        onEnded: () => {
+          if (!shouldRecordRef.current) return
+          setError('Microphone disconnected. Restart recording.')
+          shouldRecordRef.current = false
+          clearChunkTimer()
+          const recorder = mediaRecorderRef.current
+          if (recorder && recorder.state !== 'inactive') {
+            try {
+              recorder.stop()
+            } catch {
+              stopStreamTracks()
+            }
+          } else {
+            stopStreamTracks()
+          }
+          mediaRecorderRef.current = null
+          setIsRecording(false)
+        },
+      })
+    }
+
+    // Step 5b — Display track ended handler (Edge Case 3: user clicks "Stop sharing")
+    const displayTrack = displayStream.getAudioTracks()[0]
+    if (displayTrack) {
+      displayTrack.addEventListener('ended', function onDisplayTrackEnded() {
+        displayTrack.removeEventListener('ended', onDisplayTrackEnded)
+        if (!shouldRecordRef.current) return
+        setError('System audio sharing was stopped — recording ended.')
+        shouldRecordRef.current = false
+        clearChunkTimer()
+        const recorder = mediaRecorderRef.current
+        if (recorder && recorder.state !== 'inactive') {
+          try {
+            recorder.stop()
+          } catch {
+            stopStreamTracks()
+          }
+        } else {
+          stopStreamTracks()
+        }
+        mediaRecorderRef.current = null
+        setIsRecording(false)
+      })
+    }
+
+    // Step 6 — Feed mixed stream into existing recorder cycle
+    startRecorderCycle(destination.stream)
+  }, [clearChunkTimer, isRecording, startRecorderCycle, stopStreamTracks])
+
   useEffect(() => {
     return () => {
       shouldRecordRef.current = false
@@ -432,6 +571,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
     error,
     requestMicrophoneAccess,
     startRecording,
+    startRecordingWithSystemAudio,
     stopRecording,
   }
 }
