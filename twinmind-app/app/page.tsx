@@ -54,6 +54,27 @@ export default function LandingPage() {
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
           Powered by Groq — sub-second inference
         </div>
+                {/* Groq plan notice */}
+        <div className="w-full rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 text-left">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-400">
+            Heads up — Groq plan matters
+          </p>
+          <p className="text-xs leading-relaxed text-zinc-400">
+            This app works best with a{' '}
+            <a
+              href="https://console.groq.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-amber-400 underline underline-offset-2 hover:text-amber-300"
+            >
+              Groq Developer (paid) plan
+            </a>
+            . The free tier hits rate limits on the{' '}
+            <span className="font-mono text-zinc-300">gpt-oss-120b</span> model quickly,
+            which will cause suggestions and chat to fail mid-session. From real testing,
+            a full session costs well under $0.10.
+          </p>
+        </div>
 
         {/* Hero text */}
         <div className="flex flex-col gap-4">
@@ -69,6 +90,7 @@ export default function LandingPage() {
             what&apos;s actually being said, as it happens.
           </p>
         </div>
+        
 
         {/* CTAs */}
         <div className="flex flex-col items-center gap-3 sm:flex-row">
