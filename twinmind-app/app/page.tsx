@@ -1,145 +1,165 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, ExternalLink, Lightbulb, Mic, Zap } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowRight,
+  ArrowUpRight,
+  AudioLines,
+  CircleHelp,
+  FileText,
+  MessageSquare,
+  Mic,
+} from 'lucide-react'
 import { useStore } from '@/store'
 
 const STEPS = [
   {
     number: '01',
-    icon: Zap,
-    title: 'Get a free Groq API key',
-    description:
-      'Groq is free to sign up. Generate a key at console.groq.com — takes under a minute.',
+    title: 'Bring your key.',
+    description: 'Create a Groq API key and add it in Settings. No TwinMind account needed.',
   },
   {
     number: '02',
-    icon: Mic,
-    title: 'Paste your key and start the mic',
-    description:
-      'Open TwinMind, paste your key in Settings ⚙, then hit the mic button to begin capturing your meeting.',
+    title: 'Start the conversation.',
+    description: 'Turn on your mic. Your transcript takes shape as the conversation unfolds.',
   },
   {
     number: '03',
-    icon: Lightbulb,
-    title: 'Get live suggestions',
-    description:
-      'Every 30 seconds: 3 fresh cards — questions to ask, talking points, and fact-checks grounded in what was just said.',
+    title: 'Find your next thought.',
+    description: 'Get fresh suggestions every 30 seconds. Ask the chat when you want to go deeper.',
   },
 ]
 
 export default function LandingPage() {
-  const [mounted, setMounted] = useState(false)
-  const apiKey = useStore((s) => s.groqApiKey)
-  const hasKey = mounted && apiKey.trim().length > 0
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  const hasKey = useStore((s) => s.groqApiKey.trim().length > 0)
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-zinc-950 px-6 py-20">
+    <div className="min-h-screen bg-[#f8f7f3] font-sans text-[#252820] selection:bg-[#edc4ad] [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-4 [&_a]:focus-visible:outline-[#b44829]">
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-6 focus:top-4 focus:z-20 focus:bg-[#f8f7f3] focus:p-3">
+        Skip to content
+      </a>
 
-      {/* Background glows */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute left-1/2 top-[-80px] h-[400px] w-[900px] -translate-x-1/2 bg-gradient-to-b from-indigo-500/8 to-transparent blur-[90px]" />
-        <div className="absolute left-1/2 top-1/2 h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/5 blur-[120px]" />
-      </div>
-
-      <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col items-center gap-10 text-center">
-
-        {/* Badge */}
-        <div className="flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/60 px-4 py-1.5 text-xs text-zinc-400 backdrop-blur">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-          Powered by Groq — sub-second inference
-        </div>
-                {/* Groq plan notice */}
-        <div className="w-full rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 text-left">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-400">
-            Heads up — Groq plan matters
-          </p>
-          <p className="text-xs leading-relaxed text-zinc-400">
-            This app works best with a{' '}
-            <a
-              href="https://console.groq.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-amber-400 underline underline-offset-2 hover:text-amber-300"
-            >
-              Groq Developer (paid) plan
-            </a>
-            . The free tier hits rate limits on the{' '}
-            <span className="font-mono text-zinc-300">gpt-oss-120b</span> model quickly,
-            which will cause suggestions and chat to fail mid-session. From real testing,
-            a full session costs well under $0.10.
-          </p>
-        </div>
-
-        {/* Hero text */}
-        <div className="flex flex-col gap-4">
-          <h1 className="text-5xl font-semibold tracking-tight text-white sm:text-6xl">
-            Your real-time
-            <br />
-            <span className="bg-gradient-to-br from-white via-zinc-200 to-zinc-500 bg-clip-text text-transparent">
-              AI meeting copilot
-            </span>
-          </h1>
-          <p className="mx-auto max-w-lg text-base leading-relaxed text-zinc-400">
-            Live suggestions, instant answers, and automatic summaries — grounded in
-            what&apos;s actually being said, as it happens.
-          </p>
-        </div>
-        
-
-        {/* CTAs */}
-        <div className="flex flex-col items-center gap-3 sm:flex-row">
-          <Link
-            href="/app"
-            className="inline-flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-100"
-          >
-            {hasKey ? 'Continue to App' : 'Get Started'}
-            <ArrowRight size={15} />
+      <header className="mx-auto flex max-w-[1240px] items-center justify-between border-b border-[#deded5] px-6 py-6 sm:mx-8 sm:px-0 lg:mx-auto lg:w-[calc(100%-112px)]">
+        <Link href="/" aria-label="TwinMind home" className="flex items-center gap-2.5">
+          <span className="flex size-9 items-center justify-center rounded-xl bg-[#c65332] text-[#fff9f0]">
+            <AudioLines size={23} strokeWidth={1.8} aria-hidden="true" />
+          </span>
+          <span className="text-[21px] font-semibold tracking-[-0.9px]">twinmind<span className="text-[#c65332]">.</span></span>
+        </Link>
+        <nav aria-label="Main navigation" className="flex items-center gap-7 text-[13px] font-medium sm:gap-10">
+          <a href="#how-it-works" className="hidden text-[#62665b] transition-colors hover:text-[#b44829] sm:block">How it works</a>
+          <Link href="/app" className="flex min-h-10 items-center gap-2 transition-colors hover:text-[#b44829]">
+            Open app <ArrowUpRight size={16} aria-hidden="true" />
           </Link>
-          <a
-            href="https://console.groq.com/keys"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900/60 px-6 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
-          >
-            Get free Groq API key
-            <ExternalLink size={13} />
-          </a>
-        </div>
+        </nav>
+      </header>
 
-        {/* Steps */}
-        <div className="grid w-full gap-3 sm:grid-cols-3">
-          {STEPS.map(({ number, icon: Icon, title, description }) => (
-            <div
-              key={number}
-              className="flex flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-5 text-left backdrop-blur transition-colors hover:border-zinc-700"
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="font-mono text-xs text-zinc-600">{number}</span>
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900">
-                  <Icon size={13} className="text-zinc-400" />
+      <main id="main">
+        <section aria-labelledby="hero-title" className="mx-auto grid max-w-[1240px] items-center gap-14 px-6 pb-16 pt-14 sm:px-8 sm:pt-20 lg:w-[calc(100%-112px)] lg:grid-cols-[1.05fr_1fr] lg:gap-12 lg:px-0 lg:pb-24 lg:pt-24">
+          <div>
+            <p className="mb-7 flex items-center gap-3 font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-[#676b5f] sm:text-[11px]">
+              <span className="h-px w-7 bg-[#c65332]" aria-hidden="true" />
+              A second mind for your meetings
+            </p>
+            <h1 id="hero-title" className="text-[clamp(2.75rem,14vw,3.5rem)] leading-[1.02] tracking-[-0.065em] sm:text-[clamp(3.5rem,7.2vw,6.25rem)]">
+              <span className="font-medium">Be here.</span>
+              <br />
+              <span className="font-[Georgia,serif] italic tracking-[-0.065em] text-[#b44829]">Think ahead.</span>
+            </h1>
+            <p className="mt-7 max-w-[390px] text-[16px] leading-[1.8] text-[#63675d] sm:text-[17px]">
+              Stay with the conversation. TwinMind turns what&apos;s being said into useful questions, clear answers, and your next good idea.
+            </p>
+            <div className="mt-9 flex flex-wrap items-center gap-x-7 gap-y-5">
+              <Link href="/app" className="group inline-flex min-h-12 items-center justify-center gap-6 rounded-md bg-[#c65332] px-6 py-3.5 text-sm font-medium text-white transition-colors hover:bg-[#a94024]">
+                {hasKey ? 'Continue to app' : 'Try TwinMind'}
+                <ArrowRight size={17} className="transition-transform group-hover:translate-x-1 motion-reduce:transform-none" aria-hidden="true" />
+              </Link>
+              <a href="#in-action" className="inline-flex min-h-11 items-center gap-2 border-b border-[#9a9d90] text-sm transition-colors hover:text-[#b44829]">
+                See it in action <ArrowDown size={14} aria-hidden="true" />
+              </a>
+            </div>
+            <p className="mt-5 text-xs text-[#6b7063]">No sign-up. Your Groq API key. Your conversation.</p>
+          </div>
+
+          <figure id="in-action" className="min-w-0 scroll-mt-8">
+            <div className="relative rounded-xl bg-[#eae9e1] p-4 pb-6 sm:p-7 sm:pb-8">
+              <div className="mb-5 flex items-center justify-between gap-3 font-mono text-[9px] uppercase tracking-[0.12em] text-[#65695d] sm:text-[10px]">
+                <span>A conversation, with a little backup.</span>
+                <span className="shrink-0">LIVE CONTEXT</span>
+              </div>
+
+              <div className="overflow-hidden rounded-lg bg-[#272d27] text-[#f4f3ea] shadow-[0_12px_24px_-16px_#25282066]">
+                <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+                  <span className="flex items-center gap-2 text-xs font-medium"><AudioLines size={16} className="text-[#d7ad91]" aria-hidden="true" /> Product sync</span>
+                  <span className="flex items-center gap-1.5 font-mono text-[9px] text-[#ced8c3]"><span className="size-1.5 rounded-full bg-[#b8cd99]" aria-hidden="true" /> TRANSCRIBING</span>
+                </div>
+
+                <div className="space-y-5 px-5 pb-8 pt-6 text-xs leading-[1.85] sm:px-6 sm:text-[13px]">
+                  <p className="flex gap-4 text-[#c0c5bb]"><span className="pt-0.5 font-mono text-[10px] text-[#a2ad9c]">08:34</span><span>We&apos;re aiming to ship the new onboarding flow by the end of the month.</span></p>
+                  <p className="flex gap-4"><span className="pt-0.5 font-mono text-[10px] text-[#a2ad9c]">08:42</span><span>But we still haven&apos;t decided <span className="bg-[#46513d] px-0.5 text-[#e1edce]">what success looks like</span> for the first release.</span></p>
+                </div>
+
+                <div className="mx-3 mb-3 rounded-md bg-[#faf9f4] p-5 text-[#303429] sm:mx-5 sm:mb-5">
+                  <div className="mb-3 flex items-center justify-between text-[#b44829]">
+                    <span className="flex items-center gap-2 font-mono text-[9px] font-medium uppercase tracking-[0.12em]"><CircleHelp size={14} aria-hidden="true" /> A question to ask</span>
+                    <span className="font-mono text-[9px] text-[#73786a]">JUST NOW</span>
+                  </div>
+                  <p className="font-[Georgia,serif] text-[21px] leading-[1.4] tracking-[-0.025em] sm:text-[25px]">&ldquo;What&apos;s the one metric that would tell us this launch worked?&rdquo;</p>
+                  <div className="mt-4 border-t border-[#e2e3d9] pt-3 text-[10px] text-[#676d5f]">Grounded in the conversation <span aria-hidden="true">↗</span></div>
+                </div>
+
+                <div className="flex items-center justify-between px-5 pb-4">
+                  <span className="flex items-center gap-2 text-[10px] text-[#c0c9b7]"><Mic size={13} aria-hidden="true" /> Listening, so you can too.</span>
+                  <AudioLines size={32} strokeWidth={1.3} className="text-[#b8cd99]" aria-hidden="true" />
                 </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <p className="text-sm font-medium text-zinc-100">{title}</p>
-                <p className="text-xs leading-relaxed text-zinc-500">{description}</p>
-              </div>
             </div>
-          ))}
-        </div>
+            <figcaption className="mt-4 flex items-center justify-between gap-3 text-[10px] text-[#6b7063] sm:px-1 sm:text-[11px]">
+              <span>A useful nudge. Right when you need it.</span>
+              <span className="font-mono uppercase tracking-[0.1em]">Example session</span>
+            </figcaption>
+          </figure>
+        </section>
 
-        {/* Footer note */}
-        <p className="text-xs text-zinc-600">
-          Free to use&nbsp;·&nbsp;Runs in your browser&nbsp;·&nbsp;API key stays on your
-          device&nbsp;·&nbsp;No data stored on our servers
-        </p>
+        <section aria-label="Meeting tools" className="border-y border-[#deded5] bg-[#efefe7]">
+          <div className="mx-auto grid max-w-[1240px] gap-7 px-6 py-8 sm:grid-cols-3 sm:gap-5 sm:px-8 lg:w-[calc(100%-112px)] lg:px-0">
+            <div className="flex items-start gap-3.5"><Mic size={19} strokeWidth={1.5} className="mt-0.5 shrink-0 text-[#777e65]" aria-hidden="true" /><div><h2 className="text-sm font-medium">Catch the conversation.</h2><p className="mt-1 text-xs leading-relaxed text-[#676c5e]">A live transcript as you speak.</p></div></div>
+            <div className="flex items-start gap-3.5"><MessageSquare size={19} strokeWidth={1.5} className="mt-0.5 shrink-0 text-[#777e65]" aria-hidden="true" /><div><h2 className="text-sm font-medium">Keep a thought partner close.</h2><p className="mt-1 text-xs leading-relaxed text-[#676c5e]">Suggestions and chat with meeting context.</p></div></div>
+            <div className="flex items-start gap-3.5"><FileText size={19} strokeWidth={1.5} className="mt-0.5 shrink-0 text-[#777e65]" aria-hidden="true" /><div><h2 className="text-sm font-medium">Leave with the important bits.</h2><p className="mt-1 text-xs leading-relaxed text-[#676c5e]">Automatic summaries to keep you oriented.</p></div></div>
+          </div>
+        </section>
 
-      </div>
+        <section id="how-it-works" aria-labelledby="setup-title" className="mx-auto max-w-[1240px] scroll-mt-8 px-6 py-16 sm:px-8 lg:w-[calc(100%-112px)] lg:px-0 lg:py-20">
+          <div className="mb-10 flex flex-wrap items-end justify-between gap-5">
+            <div>
+              <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.14em] text-[#74796a]">Less setup. More presence.</p>
+              <h2 id="setup-title" className="text-3xl font-medium tracking-[-0.045em] sm:text-4xl">Ready for your next meeting.</h2>
+            </div>
+            <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center gap-2 text-xs font-medium text-[#b44829] underline decoration-[#d6b4a4] underline-offset-4 hover:decoration-[#b44829]">Get a Groq API key <ArrowUpRight size={14} aria-hidden="true" /></a>
+          </div>
+
+          <ol className="grid gap-8 sm:grid-cols-3 sm:gap-8 lg:gap-14">
+            {STEPS.map(({ number, title, description }) => (
+              <li key={number} className="border-t border-[#cdd0c2] pt-5">
+                <span className="font-mono text-[11px] text-[#b44829]">{number}</span>
+                <h3 className="mb-2 mt-4 text-base font-medium tracking-[-0.02em]">{title}</h3>
+                <p className="max-w-xs text-[13px] leading-[1.8] text-[#676c5e]">{description}</p>
+              </li>
+            ))}
+          </ol>
+
+          <p className="mt-10 max-w-3xl border-l-2 border-[#d6b4a4] pl-4 text-xs leading-[1.8] text-[#676c5e]">
+            <span className="font-medium text-[#454b3d]">A note on Groq:</span> a Developer plan is recommended for longer meetings. Free-tier rate limits can interrupt suggestions and chat.{' '}
+            <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-[#b44829]">View plans <span className="sr-only">on Groq</span><span aria-hidden="true">↗</span></a>
+          </p>
+        </section>
+      </main>
+
+      <footer className="mx-auto flex max-w-[1240px] flex-wrap items-center justify-between gap-4 border-t border-[#deded5] px-6 py-6 text-[11px] text-[#6b7063] sm:mx-8 sm:px-0 lg:mx-auto lg:w-[calc(100%-112px)]">
+        <p className="flex items-center gap-2"><AudioLines size={16} className="text-[#b44829]" aria-hidden="true" /><span className="font-medium text-[#454b3d]">twinmind.</span> A little backup for your brain.</p>
+        <p>Browser-based <span className="mx-2" aria-hidden="true">·</span> Powered by Groq</p>
+      </footer>
     </div>
   )
 }

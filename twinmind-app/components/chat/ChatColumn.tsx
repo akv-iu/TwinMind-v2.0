@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react'
 import { ColumnHeader } from '@/components/layout/ColumnHeader'
+import { MessagesSquare } from 'lucide-react'
 import { ChatBubble } from './ChatBubble'
 import { ChatInput } from './ChatInput'
 import { useAutoScroll } from '@/lib/hooks/useAutoScroll'
@@ -295,12 +296,12 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
     isStreaming && lastMessage?.role === 'assistant' && !lastMessage?.isFinalized
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950">
+    <div className="flex h-full min-h-0 flex-col">
       <ColumnHeader
         number={3}
-        title="CHAT (DETAILED ANSWERS)"
+        title="Think it through"
         badge={
-          <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-zinc-400">
+          <span className="rounded bg-wash px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-muted">
             SESSION-ONLY
           </span>
         }
@@ -309,12 +310,15 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
       <div
         ref={containerRef}
         onScroll={onScroll}
-        className="relative flex-1 space-y-3 overflow-y-auto p-4"
+        className="relative min-h-0 flex-1 space-y-5 overflow-y-auto p-5"
       >
         {chatMessages.length === 0 ? (
-          <p className="mx-auto mt-8 max-w-xs text-center text-sm leading-relaxed text-zinc-500">
-            Clicking a suggestion adds it to this chat and streams a detailed answer (separate prompt, more context). User can also type questions directly. One continuous chat per session {'\u2014'} no login, no persistence.
-          </p>
+          <div className="flex h-full min-h-[240px] flex-col items-center justify-center px-2 pb-8 text-center">
+            <span className="mb-4 flex size-11 items-center justify-center rounded-full bg-wash text-moss"><MessagesSquare size={21} strokeWidth={1.4} aria-hidden="true" /></span>
+            <h3 className="mb-2 font-[Georgia,serif] text-2xl tracking-[-0.03em] text-ink">A little room to go deeper.</h3>
+            <p className="max-w-[240px] text-xs leading-[1.8] text-muted">Pick a suggestion or ask your own question. Your conversation gives the answers context.</p>
+            <p className="mt-5 font-mono text-[9px] uppercase tracking-[0.1em] text-muted">Just this session. Just for you.</p>
+          </div>
         ) : (
           chatMessages.map((message, index) => {
             const isLast = index === chatMessages.length - 1
@@ -329,12 +333,12 @@ export const ChatColumn = forwardRef<ChatColumnHandle>(function ChatColumn(_prop
           })
         )}
         {error && (
-          <p className="text-center text-xs text-red-400">{error}</p>
+          <p className="text-center text-xs text-red-700" role="alert">{error}</p>
         )}
         {showStreamingIndicator && (
           <span
             aria-hidden
-            className="pointer-events-none absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-amber-400"
+            className="pointer-events-none absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-accent"
           />
         )}
       </div>

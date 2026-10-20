@@ -27,7 +27,7 @@ export function SuggestionBatch({
 }: SuggestionBatchProps) {
   return (
     <div className={`${getBatchOpacity(index)} transition-opacity`}>
-      <div className="space-y-2 px-4 pt-4">
+      <div className="space-y-3 px-4 pt-4">
         {batch.cards.map((card, i) => (
           <SuggestionCard
             key={i}
@@ -37,7 +37,7 @@ export function SuggestionBatch({
           />
         ))}
       </div>
-      <p className="mb-1 mt-3 text-center text-xs text-zinc-500">
+      <p className="mb-2 mt-3 text-center font-mono text-[9px] uppercase tracking-[0.08em] text-muted">
         {'\u2014'} BATCH {batch.batchNumber} {'\u00B7'} {batch.timestamp}
         {batch.degraded ? ' \u00B7 schema-fallback' : ''}
         {batch.repaired ? ' \u00B7 format-repair' : ''}

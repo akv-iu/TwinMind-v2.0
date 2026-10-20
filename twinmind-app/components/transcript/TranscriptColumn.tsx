@@ -12,14 +12,14 @@ import { exportSession } from '@/lib/export'
 function StatusBadge({ isRecording }: { isRecording: boolean }) {
   if (isRecording) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded border border-red-500/30 bg-red-500/20 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-red-400">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
+      <span className="inline-flex items-center gap-1.5 rounded border border-accent/20 bg-accent-soft px-2 py-1 font-mono text-[9px] uppercase tracking-[0.1em] text-accent-strong">
+        <span className="h-1.5 w-1.5 motion-safe:animate-pulse rounded-full bg-accent" />
         RECORDING
       </span>
     )
   }
   return (
-    <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-zinc-400">
+    <span className="rounded bg-wash px-2 py-1 font-mono text-[9px] uppercase tracking-[0.1em] text-muted">
       IDLE
     </span>
   )
@@ -87,38 +87,38 @@ export function TranscriptColumn() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950">
+    <div className="flex h-full min-h-0 flex-col">
       <ColumnHeader
         number={1}
-        title="MIC & TRANSCRIPT"
+        title="Listen & capture"
         badge={<StatusBadge isRecording={isRecording} />}
       />
-      <div className="flex flex-col items-center gap-3 border-b border-zinc-800 px-4 py-6">
+      <div className="flex shrink-0 flex-col items-center gap-3 border-b border-line px-5 py-5">
         <MicButton
           isRecording={isRecording}
           disabled={noKey}
           onClick={handleMicClick}
         />
         {noKey && (
-          <p className="px-2 text-center text-xs text-zinc-500">
+          <p className="px-2 text-center text-xs text-muted">
             Add your Groq API key in Settings to start.
           </p>
         )}
         {error && !noKey && (
-          <p className="px-2 text-center text-xs text-red-400">{error}</p>
+          <p className="px-2 text-center text-xs text-red-700" role="alert">{error}</p>
         )}
         {isMicMuted && isRecording && !noKey && (
-          <p className="px-2 text-center text-xs text-amber-400">
+          <p className="px-2 text-center text-xs text-amber-800">
             Mic appears muted. Check your device or unmute.
           </p>
         )}
         {!noKey && hasMicPermission === false && !error && (
-          <p className="px-2 text-center text-xs text-zinc-500">
+          <p className="px-2 text-center text-xs text-muted">
             Allow microphone access in your browser, then click the mic button.
           </p>
         )}
         {!noKey && (
-          <div className="flex w-full overflow-hidden rounded-lg border border-zinc-700">
+          <div className="flex w-full overflow-hidden rounded-lg border border-line">
             <button
               type="button"
               disabled={isRecording}
@@ -127,8 +127,8 @@ export function TranscriptColumn() {
                 'flex-1 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors',
                 'disabled:cursor-not-allowed',
                 audioMode === 'mic'
-                  ? 'bg-zinc-700 text-zinc-100'
-                  : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+                  ? 'bg-accent-soft text-accent-strong'
+                  : 'text-muted hover:bg-wash hover:text-ink',
               ].join(' ')}
             >
               Mic Only
@@ -142,8 +142,8 @@ export function TranscriptColumn() {
                   'flex-1 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors',
                   'disabled:cursor-not-allowed',
                   audioMode === 'virtual'
-                    ? 'bg-zinc-700 text-zinc-100'
-                    : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+                    ? 'bg-accent-soft text-accent-strong'
+                    : 'text-muted hover:bg-wash hover:text-ink',
                 ].join(' ')}
               >
                 Virtual Meeting
@@ -151,7 +151,7 @@ export function TranscriptColumn() {
             ) : (
               <span
                 title="Not supported in this browser"
-                className="flex-1 cursor-not-allowed py-1.5 text-center text-xs uppercase tracking-widest text-zinc-600"
+                className="flex-1 cursor-not-allowed py-1.5 text-center text-xs uppercase tracking-widest text-muted"
               >
                 Virtual Meeting
               </span>
@@ -159,7 +159,7 @@ export function TranscriptColumn() {
           </div>
         )}
         {audioMode === 'virtual' && isMac && !noKey && (
-          <p className="px-2 text-center text-xs text-amber-400">
+          <p className="px-2 text-center text-xs text-amber-800">
             On Mac, captures browser tab audio only. For Teams or Zoom, use the browser version.
           </p>
         )}
@@ -169,7 +169,7 @@ export function TranscriptColumn() {
           type="button"
           onClick={handleExport}
           disabled={isExportDisabled}
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-wash hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Download size={12} />
           Export Session

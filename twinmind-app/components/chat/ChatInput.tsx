@@ -29,7 +29,7 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
   const isDisabled = disabled || value.trim().length === 0
 
   return (
-    <div className="flex items-end gap-2 border-t border-zinc-800 p-3">
+    <div className="flex shrink-0 items-end gap-2 border-t border-line bg-paper/60 p-3">
       <textarea
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -37,14 +37,15 @@ export function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
         rows={1}
         disabled={disabled}
         placeholder={placeholder ?? 'Ask anything...'}
-        className="min-h-[40px] max-h-32 flex-1 resize-none rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+        aria-label="Message"
+        className="min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-md border border-line bg-sheet px-3 py-3 text-[13px] text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:cursor-not-allowed disabled:bg-wash disabled:opacity-70"
       />
       <button
         type="button"
         onClick={submit}
         disabled={isDisabled}
         aria-label="Send"
-        className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-100 text-zinc-900 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-600"
+        className="flex size-11 shrink-0 items-center justify-center rounded-md bg-accent text-white transition-colors hover:bg-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:bg-wash disabled:text-muted"
       >
         <Send size={16} />
       </button>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { Lightbulb, RefreshCw } from 'lucide-react'
 import { ColumnHeader } from '@/components/layout/ColumnHeader'
 import { SuggestionBatch } from './SuggestionBatch'
 import { formatCardType } from './SuggestionCard'
@@ -469,31 +469,31 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
   const noKey = !apiKey.trim()
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950">
+    <div className="flex h-full min-h-0 flex-col">
       <ColumnHeader
         number={2}
-        title="LIVE SUGGESTIONS"
+        title="A thought ahead"
         badge={
-          <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-semibold uppercase tracking-widest text-zinc-400">
+          <span className="rounded bg-wash px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-muted">
             {badgeLabel}
             {meetingKindLabel ? ` \u00B7 ${meetingKindLabel}` : ''}
           </span>
         }
       />
 
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line px-5 py-3">
         <button
           type="button"
           onClick={handleReload}
           disabled={isLoading || noKey}
-          className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-zinc-400 transition-colors hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex min-h-7 items-center gap-1.5 rounded-sm text-[11px] font-medium text-accent-strong transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RefreshCw size={12} className={isLoading ? 'animate-spin' : undefined} />
-          Reload suggestions
+          Refresh
         </button>
-        <span className="text-xs text-zinc-500">
+        <span className="font-mono text-[9px] text-muted">
           {!isRecording
-            ? 'auto-refresh paused (mic off)'
+            ? 'Paused · mic off'
             : isLoading
               ? 'generating suggestions...'
               : `auto-refresh in ${countdown}s`}
@@ -501,34 +501,36 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
       </div>
 
       {waitingForSubstance && !noKey && (
-        <div className="border-b border-zinc-900 px-4 py-2 text-xs text-zinc-500">
+        <div className="border-b border-line px-4 py-2 text-xs text-muted">
           waiting for substance...
         </div>
       )}
       {showDegradedHint && !noKey && (
-        <div className="border-b border-amber-500/20 px-4 py-2 text-xs text-amber-300/90">
+        <div className="border-b border-amber-500/20 px-4 py-2 text-xs text-amber-800">
           model json fallback active...
         </div>
       )}
       {showRepairedHint && !noKey && (
-        <div className="border-b border-cyan-500/20 px-4 py-2 text-xs text-cyan-300/90">
+        <div className="border-b border-sky-700/20 px-4 py-2 text-xs text-sky-800">
           format repair applied...
         </div>
       )}
 
-      <div className="relative flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1 overflow-y-auto pb-3">
         {noKey ? (
-          <p className="mt-4 px-4 text-center text-xs text-zinc-500">
+          <p className="mx-4 mt-4 rounded-md border border-accent/15 bg-accent-soft/60 px-3 py-2 text-center text-[11px] leading-relaxed text-accent-strong">
             Add your Groq API key in Settings to start.
           </p>
         ) : error ? (
-          <p className="mt-4 px-4 text-center text-xs text-red-400">{error}</p>
+          <p className="mt-4 px-4 text-center text-xs text-red-700" role="alert">{error}</p>
         ) : null}
 
-        {batches.length === 0 && !isLoading && !noKey ? (
-          <p className="mt-8 px-4 text-center text-sm text-zinc-500">
-            Start recording to generate suggestions.
-          </p>
+        {batches.length === 0 && !isLoading ? (
+          <div className="flex min-h-[260px] flex-col items-center justify-center px-6 py-10 text-center">
+            <span className="mb-4 flex size-11 items-center justify-center rounded-full bg-accent-soft text-accent-strong"><Lightbulb size={21} strokeWidth={1.4} aria-hidden="true" /></span>
+            <h3 className="mb-2 font-[Georgia,serif] text-2xl tracking-[-0.03em] text-ink">Your next good thought.</h3>
+            <p className="max-w-[230px] text-xs leading-[1.8] text-muted">Questions worth asking. Points worth making. Start recording for a little inspiration, grounded in what&apos;s being said.</p>
+          </div>
         ) : (
           batches.map((batch, index) => (
             <SuggestionBatch
@@ -546,7 +548,7 @@ export function SuggestionsColumn({ onCardClick, cardsDisabled }: SuggestionsCol
             {[0, 1, 2].map((i) => (
               <div
                 key={i}
-                className="h-24 w-full animate-pulse rounded-lg bg-zinc-800/70"
+                className="h-24 w-full animate-pulse rounded-lg bg-wash/70"
               />
             ))}
           </div>

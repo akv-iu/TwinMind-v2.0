@@ -3,8 +3,18 @@
 @custom-variant dark (&.dark, .dark &);
 
 @theme inline {
-  --color-background: #09090b;
-  --color-foreground: #f4f4f5;
+  --color-background: #f8f7f3;
+  --color-foreground: #252820;
+  --color-paper: #f8f7f3;
+  --color-sheet: #fffefa;
+  --color-wash: #efefe7;
+  --color-ink: #252820;
+  --color-muted: #676c5e;
+  --color-line: #deded5;
+  --color-accent: #c65332;
+  --color-accent-strong: #a94024;
+  --color-accent-soft: #f6e8df;
+  --color-moss: #4d6346;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -13,4 +23,5 @@ html, body {
   background: var(--color-background);
   color: var(--color-foreground);
   height: 100%;
+  color-scheme: light;
 }

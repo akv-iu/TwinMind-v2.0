@@ -8,20 +8,18 @@ export function InfraNoticeBanner() {
   if (dismissed) return null
 
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-amber-900/40 bg-amber-950/30 px-4 py-2 text-xs text-amber-300/80">
+    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-wash px-5 py-2 text-[11px] text-muted sm:px-8">
       <div className="flex items-center gap-2 min-w-0">
-        <Info size={12} className="shrink-0 text-amber-400/70" />
-        <span className="truncate">
-          Demo on <span className="font-medium text-amber-300">Vercel Hobby</span> — 10s function limit applies. Occasional timeouts possible under load.
-          Production deployment would move to{' '}
-          <span className="font-medium text-amber-300">Pro tier</span> for extended limits and SLA.
+        <Info size={13} className="shrink-0" aria-hidden="true" />
+        <span>
+          <span className="font-medium text-ink">A note on this demo:</span> Vercel Hobby has a 10-second function limit. You may see occasional timeouts under load.
         </span>
       </div>
       <button
         type="button"
         onClick={() => setDismissed(true)}
         aria-label="Dismiss notice"
-        className="shrink-0 rounded p-0.5 text-amber-400/50 transition-colors hover:bg-amber-900/40 hover:text-amber-300"
+        className="flex size-7 shrink-0 items-center justify-center rounded text-muted transition-colors hover:bg-line hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
       >
         <X size={12} />
       </button>

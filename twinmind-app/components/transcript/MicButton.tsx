@@ -1,6 +1,6 @@
 'use client'
 
-import { Mic } from 'lucide-react'
+import { Mic, Square } from 'lucide-react'
 
 export interface MicButtonProps {
   isRecording: boolean
@@ -10,24 +10,23 @@ export interface MicButtonProps {
 
 export function MicButton({ isRecording, disabled, onClick }: MicButtonProps) {
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex flex-col items-center gap-3">
       <button
         type="button"
         onClick={onClick}
         disabled={disabled}
+        aria-pressed={isRecording}
         aria-label={isRecording ? 'Stop recording' : 'Start recording'}
         className={[
-          'flex h-20 w-20 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-          isRecording
-            ? 'bg-red-600 ring-2 ring-red-500 ring-offset-2 ring-offset-zinc-950 hover:bg-red-700 motion-safe:animate-pulse'
-            : 'bg-zinc-800 hover:bg-zinc-700',
+          'flex size-16 items-center justify-center rounded-full bg-accent text-white transition-colors hover:bg-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-4 focus-visible:ring-offset-sheet',
+          'disabled:cursor-not-allowed disabled:bg-wash disabled:text-muted',
+          isRecording ? 'ring-4 ring-accent/15' : '',
         ].join(' ')}
       >
-        <Mic size={28} className="text-white" />
+        {isRecording ? <Square size={20} fill="currentColor" aria-hidden="true" /> : <Mic size={25} strokeWidth={1.7} aria-hidden="true" />}
       </button>
-      <span className="text-xs text-zinc-400">
-        {isRecording ? 'Recording...' : 'Stopped. Click to resume.'}
+      <span className="text-xs font-medium text-muted">
+        {isRecording ? 'Recording. Stay with the conversation.' : 'Ready when you are.'}
       </span>
     </div>
   )

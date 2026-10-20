@@ -145,21 +145,21 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <button
         aria-label="Close settings"
         onClick={onClose}
-        className="flex-1 bg-black/60"
+        className="flex-1 bg-ink/25 backdrop-blur-[3px]"
       />
-      <aside className="flex h-full w-96 max-w-full flex-col border-l border-zinc-800 bg-zinc-950">
-        <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-          <h2 className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-widest text-zinc-300">
+      <aside className="flex h-full w-[440px] max-w-full shrink-0 flex-col border-l border-line bg-paper shadow-xl">
+        <header className="flex shrink-0 items-center justify-between border-b border-line px-6 py-5">
+          <h2 id="settings-title" className="inline-flex items-center gap-2 font-[Georgia,serif] text-[28px] tracking-[-0.03em] text-ink">
             <span>Settings</span>
             {hasChanges ? (
               <span
                 aria-label="Unsaved changes"
                 title="Unsaved changes"
-                className="text-zinc-500"
+                className="text-accent"
               >
                 •
               </span>
@@ -167,13 +167,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </h2>
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600"
+            aria-label="Close settings panel"
+            className="flex size-9 items-center justify-center rounded-md text-muted hover:bg-wash hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
             <X size={16} />
           </button>
         </header>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6 text-[13px]">
           <Field label="Groq API key">
             <input
               type="password"
@@ -181,23 +182,23 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               value={draft.groqApiKey}
               onChange={(e) => setDraft({ ...draft, groqApiKey: e.target.value })}
               placeholder="gsk_..."
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+              className="min-h-11 w-full rounded-md border border-line bg-sheet px-3 py-2 text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">
               Stored only in this browser session. Required for transcription, suggestions, and chat.
             </p>
           </Field>
 
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">
-              Suggestion Intent Prompts (4 Sections)
+            <p className="border-t border-line pt-5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted">
+              Your suggestion prompts
             </p>
-            <div className="overflow-x-auto pb-1">
-              <div className="grid grid-flow-col auto-cols-[17rem] gap-3">
+            <div>
+              <div className="grid gap-4">
                 {SUGGEST_INTENT_FIELDS.map((field) => (
                   <Field key={field.key} label={field.label}>
                     <textarea
-                      rows={7}
+                      rows={3}
                       value={draft.suggestIntentPrompts[field.key]}
                       onChange={(e) =>
                         setDraft({
@@ -208,7 +209,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                           },
                         })
                       }
-                      className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                      className="w-full rounded-md border border-line bg-sheet px-3 py-2 leading-relaxed text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
                     />
                   </Field>
                 ))}
@@ -221,7 +222,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               rows={5}
               value={draft.chatPrompt}
               onChange={(e) => setDraft({ ...draft, chatPrompt: e.target.value })}
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+              className="w-full rounded-md border border-line bg-sheet px-3 py-2 leading-relaxed text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
           </Field>
 
@@ -235,7 +236,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 onChange={(e) =>
                   setDraft({ ...draft, suggestContextChars: Number(e.target.value) })
                 }
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                className="min-h-10 w-full rounded-md border border-line bg-sheet px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
               />
             </Field>
             <Field label="Chat context chars">
@@ -247,32 +248,32 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 onChange={(e) =>
                   setDraft({ ...draft, chatContextChars: Number(e.target.value) })
                 }
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                className="min-h-10 w-full rounded-md border border-line bg-sheet px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40"
               />
             </Field>
           </div>
 
           <button
             onClick={handleResetPrompts}
-            className="text-xs uppercase tracking-widest text-zinc-500 hover:text-zinc-300"
+            className="min-h-9 rounded-sm text-xs font-medium text-accent-strong underline underline-offset-4 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
           >
             Reset prompts to defaults
           </button>
-          <p className="text-xs text-zinc-500">
+          <p className="text-[11px] leading-relaxed text-muted">
             Unsaved changes are discarded on Cancel, X, or click outside. Press Save to apply.
           </p>
         </div>
 
-        <footer className="flex justify-end gap-2 border-t border-zinc-800 p-4">
+        <footer className="flex shrink-0 justify-end gap-3 border-t border-line bg-sheet p-5">
           <button
             onClick={onClose}
-            className="rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-widest text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600"
+            className="min-h-10 rounded-md border border-line px-4 py-2 text-xs font-medium text-muted hover:bg-wash hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
-            className="rounded-lg bg-zinc-100 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-zinc-950 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+            className="min-h-10 rounded-md bg-accent px-5 py-2 text-xs font-medium text-white hover:bg-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
             Save
           </button>
@@ -285,7 +286,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-widest text-zinc-400">
+      <span className="mb-2 block font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
         {label}
       </span>
       {children}

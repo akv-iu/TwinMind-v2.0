@@ -27,7 +27,7 @@ function renderBoldMarkdown(text: string): ReactNode[] {
       nodes.push(text.slice(cursor, start))
     }
     nodes.push(
-      <strong key={`bold-${key++}`} className="font-semibold text-zinc-50">
+      <strong key={`bold-${key++}`} className="font-semibold text-ink">
         {boldText}
       </strong>,
     )
@@ -75,20 +75,20 @@ export function ChatBubble({ message, isStreaming, onRetryLast }: ChatBubbleProp
 
   return (
     <div className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
-      <span className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+      <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-muted">
         {label}
       </span>
       <div
         className={[
-          'max-w-[85%] rounded-lg px-3 py-2 text-sm leading-relaxed',
+          'max-w-[95%] break-words rounded-lg border px-4 py-3 text-[13px] leading-[1.8]',
           isUser
-            ? 'bg-zinc-800 text-zinc-100'
-            : 'bg-zinc-900 text-zinc-100 ring-1 ring-zinc-800',
-          message.isFailed ? 'opacity-70 ring-amber-500/30' : '',
+            ? 'border-accent/15 bg-accent-soft text-ink'
+            : 'border-line bg-paper text-ink',
+          message.isFailed ? 'border-amber-600/40' : '',
         ].join(' ')}
       >
         {showSpinner ? (
-          <span className="inline-flex items-center gap-2 text-xs text-zinc-500">
+          <span className="inline-flex items-center gap-2 text-xs text-muted">
             <Loader2 size={12} className="animate-spin" />
             Thinking...
           </span>
@@ -97,11 +97,11 @@ export function ChatBubble({ message, isStreaming, onRetryLast }: ChatBubbleProp
         )}
 
         {showRetry && (
-          <div className="mt-2 border-t border-zinc-800 pt-2">
+          <div className="mt-2 border-t border-line pt-2">
             <button
               type="button"
               onClick={onRetryLast}
-              className="rounded border border-zinc-700 px-2 py-1 text-xs font-semibold uppercase tracking-widest text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600"
+              className="rounded border border-line px-2 py-1 text-xs font-semibold uppercase tracking-widest text-ink transition-colors hover:bg-wash hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             >
               Retry
             </button>
